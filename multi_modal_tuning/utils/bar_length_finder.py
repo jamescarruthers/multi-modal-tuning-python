@@ -4,14 +4,18 @@ Bar Length Finder Utility
 Uses binary search to find optimal bar length for a target fundamental frequency.
 The physics relationship: f1 is proportional to h/L^2 for a uniform bar.
 Longer bars -> lower frequencies, shorter bars -> higher frequencies.
+
+Supports both 2D Timoshenko beam analysis (fast) and 3D solid element analysis (accurate).
 """
 
 from typing import List, Optional, Callable
 from dataclasses import dataclass
 import math
 
-from ..types import Material, BarParameters
+from ..types import Material, BarParameters, AnalysisMode
 from ..physics.frequencies import compute_frequencies_from_genes
+from ..physics.fem_3d import compute_frequencies_3d_classified
+from ..physics.bar_profile import generate_element_heights
 from .note_utils import NoteInfo, frequency_error_cents
 
 
@@ -43,7 +47,10 @@ def compute_f1_for_uniform_bar(
     width: float,
     thickness: float,
     material: Material,
-    num_elements: int = 80
+    num_elements: int = 80,
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
+    ny: int = 2,
+    nz: int = 3
 ) -> float:
     """
     Compute f1 for a uniform bar (no cuts) at given length.
@@ -54,31 +61,61 @@ def compute_f1_for_uniform_bar(
         thickness: Bar thickness in mm
         material: Material properties
         num_elements: Number of FEM elements (default: 80)
+        analysis_mode: BEAM_2D (fast) or SOLID_3D (accurate)
+        ny: Number of elements in width direction (3D only)
+        nz: Number of elements in thickness direction (3D only)
 
     Returns:
         Fundamental frequency f1 in Hz
     """
     # Convert mm to meters for physics calculations
+    L_m = length / 1000
+    b_m = width / 1000
+    h0_m = thickness / 1000
+
     bar = BarParameters(
-        L=length / 1000,
-        b=width / 1000,
-        h0=thickness / 1000,
-        hMin=thickness / 10000  # 10% of thickness
+        L=L_m,
+        b=b_m,
+        h0=h0_m,
+        hMin=h0_m / 10  # 10% of thickness
     )
 
-    # Empty genes = uniform bar with no cuts
-    genes: List[float] = []
+    if analysis_mode == AnalysisMode.SOLID_3D:
+        # Generate uniform element heights for 3D analysis
+        element_heights = [h0_m] * num_elements
 
-    frequencies = compute_frequencies_from_genes(
-        genes,
-        bar,
-        material,
-        1,              # Only need f1
-        num_elements,
-        0               # 0 cuts
-    )
+        # Use 3D analysis with mode classification to get bending frequency
+        _, classified, _ = compute_frequencies_3d_classified(
+            element_heights,
+            L_m,
+            b_m,
+            material.E,
+            material.rho,
+            material.nu,
+            num_modes=10,
+            ny=ny,
+            nz=nz
+        )
 
-    return frequencies[0] if frequencies else 0.0
+        # Return first vertical bending mode
+        bending_modes = classified.get('vertical_bending', [])
+        if bending_modes:
+            return bending_modes[0]['frequency']
+        return 0.0
+    else:
+        # 2D Timoshenko beam analysis (default)
+        genes: List[float] = []  # Empty genes = uniform bar with no cuts
+
+        frequencies = compute_frequencies_from_genes(
+            genes,
+            bar,
+            material,
+            1,              # Only need f1
+            num_elements,
+            0               # 0 cuts
+        )
+
+        return frequencies[0] if frequencies else 0.0
 
 
 def find_optimal_length(
@@ -90,7 +127,11 @@ def find_optimal_length(
     max_length: float,
     tolerance_cents: float = 1.0,
     max_iterations: int = 50,
-    num_elements: int = 80
+    num_elements: int = 80,
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
+    frequency_offset: float = 0.0,
+    ny: int = 2,
+    nz: int = 3
 ) -> LengthSearchResult:
     """
     Find optimal bar length for a target frequency using binary search.
@@ -109,10 +150,18 @@ def find_optimal_length(
         tolerance_cents: Stop search when within this tolerance (cents)
         max_iterations: Maximum search iterations
         num_elements: Number of FEM elements
+        analysis_mode: BEAM_2D (fast) or SOLID_3D (accurate)
+        frequency_offset: Calibration offset (e.g., -0.05 to aim 5% lower for 3D calibration)
+        ny: Number of elements in width direction (3D only)
+        nz: Number of elements in thickness direction (3D only)
 
     Returns:
         Search result with optimal length and computed frequency
     """
+    # Apply frequency offset for calibration
+    # If using 2D with a known 3D offset, adjust target so 3D will hit the actual target
+    effective_target = target_frequency * (1 + frequency_offset)
+
     low = min_length
     high = max_length
     iterations = 0
@@ -121,18 +170,19 @@ def find_optimal_length(
     best_error = float('inf')
 
     # Check bounds first
-    f_at_min = compute_f1_for_uniform_bar(min_length, width, thickness, material, num_elements)
-    f_at_max = compute_f1_for_uniform_bar(max_length, width, thickness, material, num_elements)
+    f_at_min = compute_f1_for_uniform_bar(min_length, width, thickness, material, num_elements, analysis_mode, ny, nz)
+    f_at_max = compute_f1_for_uniform_bar(max_length, width, thickness, material, num_elements, analysis_mode, ny, nz)
 
     # f1 decreases with length, so f_at_min > f_at_max
-    if target_frequency >= f_at_min:
+    # Use effective_target for search logic, but report error vs original target
+    if effective_target >= f_at_min:
         return LengthSearchResult(
             length=min_length,
             computed_freq=f_at_min,
             iterations=1,
             error_cents=frequency_error_cents(f_at_min, target_frequency)
         )
-    if target_frequency <= f_at_max:
+    if effective_target <= f_at_max:
         return LengthSearchResult(
             length=max_length,
             computed_freq=f_at_max,
@@ -140,27 +190,30 @@ def find_optimal_length(
             error_cents=frequency_error_cents(f_at_max, target_frequency)
         )
 
-    # Binary search
+    # Binary search - search for effective_target, report error vs original target
     while iterations < max_iterations and high - low > 0.01:  # 0.01mm precision
         iterations += 1
         mid = (low + high) / 2
-        f1 = compute_f1_for_uniform_bar(mid, width, thickness, material, num_elements)
+        f1 = compute_f1_for_uniform_bar(mid, width, thickness, material, num_elements, analysis_mode, ny, nz)
 
-        error_cents = frequency_error_cents(f1, target_frequency)
+        # Error vs effective_target for search decisions
+        search_error_cents = frequency_error_cents(f1, effective_target)
+        # Error vs original target for reporting
+        report_error_cents = frequency_error_cents(f1, target_frequency)
 
-        if abs(error_cents) < abs(best_error):
+        if abs(report_error_cents) < abs(best_error):
             best_length = mid
             best_freq = f1
-            best_error = error_cents
+            best_error = report_error_cents
 
-        # Check if within tolerance
-        if abs(error_cents) <= tolerance_cents:
+        # Check if within tolerance (vs effective target for search)
+        if abs(search_error_cents) <= tolerance_cents:
             break
 
         # f1 decreases with length, so:
         # If computed f1 is too high, need longer bar -> search upper half
         # If computed f1 is too low, need shorter bar -> search lower half
-        if f1 > target_frequency:
+        if f1 > effective_target:
             low = mid  # Need longer bar (lower frequency)
         else:
             high = mid  # Need shorter bar (higher frequency)
@@ -182,7 +235,11 @@ def find_lengths_for_notes(
     max_length: float,
     tolerance_cents: float = 1.0,
     num_elements: int = 80,
-    on_progress: Optional[Callable[[str, int, int], None]] = None
+    on_progress: Optional[Callable[[str, int, int], None]] = None,
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
+    frequency_offset: float = 0.0,
+    ny: int = 2,
+    nz: int = 3
 ) -> List[BarLengthResult]:
     """
     Find optimal lengths for all notes in a range.
@@ -197,6 +254,10 @@ def find_lengths_for_notes(
         tolerance_cents: Acceptable frequency error in cents
         num_elements: Number of FEM elements
         on_progress: Callback for progress updates
+        analysis_mode: BEAM_2D (fast) or SOLID_3D (accurate)
+        frequency_offset: Calibration offset for 2D/3D calibration
+        ny: Number of elements in width direction (3D only)
+        nz: Number of elements in thickness direction (3D only)
 
     Returns:
         Array of results for each note
@@ -216,7 +277,11 @@ def find_lengths_for_notes(
             max_length,
             tolerance_cents,
             50,
-            num_elements
+            num_elements,
+            analysis_mode,
+            frequency_offset,
+            ny,
+            nz
         )
 
         results.append(BarLengthResult(
