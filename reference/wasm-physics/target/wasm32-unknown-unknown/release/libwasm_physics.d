@@ -1,0 +1,1 @@
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/libwasm_physics.rlib: /Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/src/lib.rs

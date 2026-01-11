@@ -1,0 +1,10 @@
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/deps/libc-6a49b7d5b1bb6bd1.d: /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/lib.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/macros.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/new/mod.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/new/common/mod.rs
+
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/deps/liblibc-6a49b7d5b1bb6bd1.rlib: /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/lib.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/macros.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/new/mod.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/new/common/mod.rs
+
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/deps/liblibc-6a49b7d5b1bb6bd1.rmeta: /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/lib.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/macros.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/new/mod.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/new/common/mod.rs
+
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/lib.rs:
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/macros.rs:
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/new/mod.rs:
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/libc-0.2.178/src/new/common/mod.rs:

@@ -1,0 +1,9 @@
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/deps/wasm_bindgen_rayon-c69e29b1d4990a00.d: /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/lib.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/../README.md /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/workerHelpers.js
+
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/deps/libwasm_bindgen_rayon-c69e29b1d4990a00.rlib: /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/lib.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/../README.md /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/workerHelpers.js
+
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/deps/libwasm_bindgen_rayon-c69e29b1d4990a00.rmeta: /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/lib.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/../README.md /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/workerHelpers.js
+
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/lib.rs:
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/../README.md:
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasm-bindgen-rayon-1.3.0/src/workerHelpers.js:

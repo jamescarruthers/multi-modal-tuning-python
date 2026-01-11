@@ -1,0 +1,9 @@
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/deps/rustc_demangle-0b010f3ae8aaa5a6.d: /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/lib.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/legacy.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/v0.rs
+
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/deps/librustc_demangle-0b010f3ae8aaa5a6.rlib: /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/lib.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/legacy.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/v0.rs
+
+/Users/james/Library/CloudStorage/Dropbox/Apps/GitHub/MultiModalEvolutionTuning-Claude/multi-modal-tuning/wasm-physics/target/wasm32-unknown-unknown/release/deps/librustc_demangle-0b010f3ae8aaa5a6.rmeta: /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/lib.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/legacy.rs /Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/v0.rs
+
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/lib.rs:
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/legacy.rs:
+/Users/james/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustc-demangle-0.1.26/src/v0.rs:
