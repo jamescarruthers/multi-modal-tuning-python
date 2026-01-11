@@ -330,6 +330,102 @@ def generate_bar_mesh_3d(
     return nodes, elements, heights_per_element
 
 
+def generate_bar_mesh_3d_adaptive(
+    length: float,
+    width: float,
+    x_positions: List[float],
+    element_heights: List[float],
+    ny: int = 2,
+    nz: int = 2
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Generate 3D mesh for an undercut bar with adaptive x-spacing.
+
+    Unlike generate_bar_mesh_3d which uses uniform spacing, this function
+    accepts pre-computed x-positions allowing for refined mesh at cut boundaries.
+
+    Args:
+        length: Bar length (m)
+        width: Bar width (m)
+        x_positions: X coordinates of element boundaries (length nx+1)
+        element_heights: Height at each x-element (length nx)
+        ny: Number of elements in y-direction
+        nz: Number of elements in z-direction
+
+    Returns:
+        Tuple of (nodes, elements, heights_per_element):
+        - nodes: (num_nodes, 3) array of coordinates
+        - elements: (num_elements, 8) array of node indices
+        - heights_per_element: height value for each 3D element
+    """
+    nx = len(element_heights)
+    assert len(x_positions) == nx + 1, "x_positions must have length len(element_heights) + 1"
+
+    dy = width / ny
+
+    # Node grid dimensions
+    nnx = nx + 1
+    nny = ny + 1
+    nnz = nz + 1
+
+    nodes_list = []
+    node_index = {}  # (ix, iy, iz) -> node index
+
+    # Generate nodes - x coordinates from x_positions, z varies based on height
+    for ix in range(nnx):
+        x = x_positions[ix]
+
+        # Determine height at this x position
+        if ix == 0:
+            h = element_heights[0]
+        elif ix == nx:
+            h = element_heights[-1]
+        else:
+            # Average of adjacent elements
+            h = (element_heights[ix - 1] + element_heights[ix]) / 2
+
+        dz = h / nz
+
+        for iy in range(nny):
+            y = iy * dy
+
+            for iz in range(nnz):
+                z = iz * dz
+
+                node_idx = len(nodes_list)
+                node_index[(ix, iy, iz)] = node_idx
+                nodes_list.append([x, y, z])
+
+    nodes = np.array(nodes_list)
+
+    # Generate elements
+    elements_list = []
+    heights_list = []
+
+    for ix in range(nx):
+        h = element_heights[ix]
+
+        for iy in range(ny):
+            for iz in range(nz):
+                # 8 nodes of hexahedron
+                n0 = node_index[(ix, iy, iz)]
+                n1 = node_index[(ix + 1, iy, iz)]
+                n2 = node_index[(ix + 1, iy + 1, iz)]
+                n3 = node_index[(ix, iy + 1, iz)]
+                n4 = node_index[(ix, iy, iz + 1)]
+                n5 = node_index[(ix + 1, iy, iz + 1)]
+                n6 = node_index[(ix + 1, iy + 1, iz + 1)]
+                n7 = node_index[(ix, iy + 1, iz + 1)]
+
+                elements_list.append([n0, n1, n2, n3, n4, n5, n6, n7])
+                heights_list.append(h)
+
+    elements = np.array(elements_list)
+    heights_per_element = np.array(heights_list)
+
+    return nodes, elements, heights_per_element
+
+
 def assemble_global_matrices_3d(
     nodes: np.ndarray,
     elements: np.ndarray,
@@ -803,3 +899,61 @@ def get_bending_frequencies_3d(
     bending_freqs = [m['frequency'] for m in bending_modes[:num_bending_modes]]
 
     return bending_freqs
+
+
+def compute_frequencies_3d_adaptive(
+    x_positions: List[float],
+    element_heights: List[float],
+    length: float,
+    width: float,
+    E: float,
+    rho: float,
+    nu: float,
+    num_modes: int = 10,
+    ny: int = 2,
+    nz: int = 2
+) -> Tuple[List[float], dict, np.ndarray, np.ndarray]:
+    """
+    Compute natural frequencies using 3D FEM with adaptive mesh and mode classification.
+
+    This function uses pre-computed adaptive mesh positions for refined accuracy
+    at cut boundaries while keeping coarser elements in uniform regions.
+
+    Args:
+        x_positions: X coordinates of element boundaries (from generate_adaptive_mesh_1d)
+        element_heights: Height of each element along bar length (m)
+        length: Bar length (m)
+        width: Bar width (m)
+        E: Young's modulus (Pa)
+        rho: Density (kg/m^3)
+        nu: Poisson's ratio
+        num_modes: Number of modes to extract
+        ny: Number of elements in width direction
+        nz: Number of elements in thickness direction
+
+    Returns:
+        Tuple of:
+        - all_frequencies: List of all frequencies
+        - classified: Dict with modes organized by type
+        - nodes: Node coordinates for visualization
+        - elements: Element connectivity array
+    """
+    # Generate adaptive mesh
+    nodes, elements, _ = generate_bar_mesh_3d_adaptive(
+        length, width, x_positions, element_heights, ny, nz
+    )
+
+    # Determine if we should use sparse matrices
+    num_dof = 3 * len(nodes)
+    use_sparse = num_dof > 1000
+
+    # Assemble matrices
+    K, M = assemble_global_matrices_3d(nodes, elements, E, nu, rho, use_sparse)
+
+    # Solve eigenvalue problem with mode shapes
+    frequencies, mode_shapes = solve_eigenvalue_3d_with_vectors(K, M, num_modes, use_sparse)
+
+    # Classify modes
+    classified = classify_all_modes(frequencies, mode_shapes, nodes)
+
+    return frequencies, classified, nodes, elements

@@ -227,6 +227,116 @@ def validate_cuts(cuts: List[Cut], bar: BarParameters) -> Tuple[bool, Optional[s
     return (True, None)
 
 
+def generate_adaptive_mesh_1d(
+    cuts: List[Cut],
+    L: float,
+    h0: float,
+    base_elements: int = 60,
+    refinement_factor: int = 4,
+    transition_width: float = 0.02
+) -> Tuple[List[float], List[float]]:
+    """
+    Generate adaptive 1D mesh with refinement at cut boundaries.
+
+    Uses finer elements near discontinuities (cut boundaries) and coarser
+    elements in uniform regions for better accuracy with fewer total elements.
+
+    Args:
+        cuts: Array of cuts
+        L: Bar length (m)
+        h0: Original height (m)
+        base_elements: Number of elements if mesh were uniform
+        refinement_factor: How many times finer the mesh is at boundaries
+        transition_width: Width of transition zone as fraction of L
+
+    Returns:
+        Tuple of (x_positions, element_heights):
+        - x_positions: List of element starting x-coordinates (length n)
+        - element_heights: Height at each element (length n)
+    """
+    sorted_cuts = sorted(cuts, key=lambda c: c.lambda_, reverse=True)
+    center_x = L / 2
+
+    # Find all discontinuity positions
+    discontinuities: List[float] = []
+    for cut in sorted_cuts:
+        if cut.lambda_ <= 0:
+            continue
+        left_boundary = center_x - cut.lambda_
+        right_boundary = center_x + cut.lambda_
+        discontinuities.append(left_boundary)
+        discontinuities.append(right_boundary)
+
+    discontinuities.sort()
+
+    # Define refinement zones around each discontinuity
+    transition_dist = transition_width * L
+
+    def is_near_discontinuity(x: float) -> bool:
+        """Check if position is near any discontinuity."""
+        for disc in discontinuities:
+            if abs(x - disc) < transition_dist:
+                return True
+        return False
+
+    # Generate adaptive element positions
+    # Base element size
+    base_dx = L / base_elements
+    fine_dx = base_dx / refinement_factor
+
+    x_positions: List[float] = [0.0]
+    current_x = 0.0
+
+    while current_x < L - 1e-10:
+        # Determine element size based on proximity to discontinuity
+        if is_near_discontinuity(current_x) or is_near_discontinuity(current_x + base_dx):
+            dx = fine_dx
+        else:
+            dx = base_dx
+
+        # Don't overshoot the bar length
+        if current_x + dx > L:
+            dx = L - current_x
+
+        current_x += dx
+        if current_x <= L:
+            x_positions.append(current_x)
+
+    # Ensure last position is exactly L
+    if abs(x_positions[-1] - L) > 1e-10:
+        x_positions[-1] = L
+
+    # Generate heights for each element
+    num_elements = len(x_positions) - 1
+    element_heights: List[float] = []
+
+    for i in range(num_elements):
+        x_start = x_positions[i]
+        x_end = x_positions[i + 1]
+        x_mid = (x_start + x_end) / 2
+
+        # Check if element contains a discontinuity
+        found_discontinuity = False
+        for disc_x in discontinuities:
+            if disc_x > x_start and disc_x < x_end:
+                # Element contains a discontinuity - use quadratic interpolation
+                dx1 = disc_x - x_start
+                dx2 = x_end - disc_x
+                h1 = compute_height(disc_x - 0.0001, sorted_cuts, L, h0)
+                h2 = compute_height(disc_x + 0.0001, sorted_cuts, L, h0)
+
+                # Quadratic weighting from Eq. 6
+                element_heights.append(math.sqrt((h1 * h1 * dx1 + h2 * h2 * dx2) / (dx1 + dx2)))
+                found_discontinuity = True
+                break
+
+        if not found_discontinuity:
+            # No discontinuity - use height at midpoint
+            element_heights.append(compute_height(x_mid, sorted_cuts, L, h0))
+
+    return x_positions, element_heights
+
+
 def generate_profile_points(
     cuts: List[Cut],
     L: float,

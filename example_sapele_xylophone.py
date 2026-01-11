@@ -33,11 +33,17 @@ from multi_modal_tuning import (
 )
 from multi_modal_tuning.physics.fem_3d import (
     generate_bar_mesh_3d,
+    generate_bar_mesh_3d_adaptive,
     compute_frequencies_3d,
     compute_frequencies_3d_classified,
+    compute_frequencies_3d_adaptive,
     get_bending_frequencies_3d,
 )
-from multi_modal_tuning.physics.bar_profile import generate_element_heights, genes_to_cuts
+from multi_modal_tuning.physics.bar_profile import (
+    generate_element_heights,
+    generate_adaptive_mesh_1d,
+    genes_to_cuts,
+)
 from multi_modal_tuning.physics.visualization import (
     visualize_bar_mesh,
     visualize_bar_profile,
@@ -55,6 +61,12 @@ def main():
                         help="Number of elements in thickness direction for 3D (default: 3)")
     parser.add_argument("--nx-3d", type=int, default=120,
                         help="Number of elements in length direction for 3D (default: 120)")
+    parser.add_argument("--adaptive", action="store_true", default=True,
+                        help="Use adaptive meshing (refined at cut boundaries)")
+    parser.add_argument("--no-adaptive", action="store_false", dest="adaptive",
+                        help="Use uniform meshing")
+    parser.add_argument("--refinement", type=int, default=4,
+                        help="Adaptive mesh refinement factor at boundaries (default: 4)")
     args = parser.parse_args()
 
     # Bar dimensions (convert mm to meters)
@@ -164,19 +176,43 @@ def main():
     cut_genes = result.best_individual.genes[:4]  # 2 cuts * 2 params
     cuts = genes_to_cuts(cut_genes)
 
-    # Generate element heights for 3D mesh
-    nx_3d = args.nx_3d
-    element_heights = generate_element_heights(cuts, bar.L, bar.h0, nx_3d)
+    # Generate mesh - adaptive or uniform
+    if args.adaptive:
+        print(f"\nUsing ADAPTIVE meshing (refinement factor: {args.refinement}x)")
+        x_positions, element_heights = generate_adaptive_mesh_1d(
+            cuts, bar.L, bar.h0,
+            base_elements=args.nx_3d,
+            refinement_factor=args.refinement,
+            transition_width=0.03  # 3% of bar length transition zone
+        )
+        nx_actual = len(element_heights)
 
-    print(f"\n3D Mesh parameters:")
-    print(f"  Elements in length (nx): {nx_3d}")
-    print(f"  Elements in width (ny): {args.ny}")
-    print(f"  Elements in thickness (nz): {args.nz}")
+        print(f"\n3D Mesh parameters:")
+        print(f"  Base elements: {args.nx_3d}")
+        print(f"  Actual elements in length (nx): {nx_actual}")
+        print(f"  Elements in width (ny): {args.ny}")
+        print(f"  Elements in thickness (nz): {args.nz}")
+        print(f"  Refinement at boundaries: {args.refinement}x finer")
 
-    # Generate the 3D mesh
-    nodes, elements, _ = generate_bar_mesh_3d(
-        bar.L, bar.b, element_heights, nx_3d, args.ny, args.nz
-    )
+        # Generate the adaptive 3D mesh
+        nodes, elements, _ = generate_bar_mesh_3d_adaptive(
+            bar.L, bar.b, x_positions, element_heights, args.ny, args.nz
+        )
+    else:
+        print(f"\nUsing UNIFORM meshing")
+        nx_3d = args.nx_3d
+        x_positions = None  # Not needed for uniform
+        element_heights = generate_element_heights(cuts, bar.L, bar.h0, nx_3d)
+
+        print(f"\n3D Mesh parameters:")
+        print(f"  Elements in length (nx): {nx_3d}")
+        print(f"  Elements in width (ny): {args.ny}")
+        print(f"  Elements in thickness (nz): {args.nz}")
+
+        # Generate the uniform 3D mesh
+        nodes, elements, _ = generate_bar_mesh_3d(
+            bar.L, bar.b, element_heights, nx_3d, args.ny, args.nz
+        )
 
     num_nodes = len(nodes)
     num_elements = len(elements)
@@ -240,21 +276,38 @@ def main():
     print("STEP 4: 3D Analysis with Mode Classification")
     print("=" * 70)
 
-    print(f"\nRunning 3D solid element analysis with mode classification...")
+    mesh_type = "adaptive" if args.adaptive else "uniform"
+    print(f"\nRunning 3D solid element analysis ({mesh_type} mesh)...")
     print(f"  (Using Soares' corner displacement method)")
 
     start = time.time()
-    all_freqs_3d, classified_modes, _ = compute_frequencies_3d_classified(
-        element_heights,
-        bar.L,
-        bar.b,
-        material.E,
-        material.rho,
-        material.nu,
-        num_modes=15,  # Request more modes for classification
-        ny=args.ny,
-        nz=args.nz
-    )
+    if args.adaptive and x_positions is not None:
+        # Use adaptive analysis
+        all_freqs_3d, classified_modes, _, _ = compute_frequencies_3d_adaptive(
+            x_positions,
+            element_heights,
+            bar.L,
+            bar.b,
+            material.E,
+            material.rho,
+            material.nu,
+            num_modes=15,  # Request more modes for classification
+            ny=args.ny,
+            nz=args.nz
+        )
+    else:
+        # Use uniform analysis
+        all_freqs_3d, classified_modes, _ = compute_frequencies_3d_classified(
+            element_heights,
+            bar.L,
+            bar.b,
+            material.E,
+            material.rho,
+            material.nu,
+            num_modes=15,  # Request more modes for classification
+            ny=args.ny,
+            nz=args.nz
+        )
     elapsed_3d = time.time() - start
 
     print(f"\n3D Analysis completed in {elapsed_3d:.1f} seconds")
