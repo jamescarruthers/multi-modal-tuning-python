@@ -53,8 +53,8 @@ def main():
                         help="Number of elements in width direction for 3D (default: 2)")
     parser.add_argument("--nz", type=int, default=3,
                         help="Number of elements in thickness direction for 3D (default: 3)")
-    parser.add_argument("--nx-3d", type=int, default=60,
-                        help="Number of elements in length direction for 3D (default: 60)")
+    parser.add_argument("--nx-3d", type=int, default=120,
+                        help="Number of elements in length direction for 3D (default: 120)")
     args = parser.parse_args()
 
     # Bar dimensions (convert mm to meters)
