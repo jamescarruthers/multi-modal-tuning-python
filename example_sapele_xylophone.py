@@ -12,12 +12,13 @@ This example:
 3. Compares 2D vs 3D frequency predictions
 
 Usage:
-    python example_sapele_xylophone.py              # Run with visualization
+    python example_sapele_xylophone.py              # Run and save images
     python example_sapele_xylophone.py --no-plot    # Skip visualization
 """
 
 import argparse
 import time
+import os
 
 from multi_modal_tuning import (
     BarParameters,
@@ -189,23 +190,39 @@ def main():
         print("STEP 3: Visualize Mesh")
         print("=" * 70)
 
-        print("\nDisplaying bar profile (side view)...")
+        # Create temp folder for output images
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        temp_dir = os.path.join(script_dir, "temp")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        profile_path = os.path.join(temp_dir, "bar_profile_2d.png")
+        mesh_path = os.path.join(temp_dir, "bar_mesh_3d.png")
+
+        print(f"\nSaving visualizations to: {temp_dir}/")
+
+        print(f"  Saving bar profile (side view)... {profile_path}")
         visualize_bar_profile(
             element_heights,
             bar.L,
             bar.h0,
             title=f"Optimized Bar Profile - F4 Xylophone ({material.name})",
-            show=True
+            save_path=profile_path,
+            show=False
         )
 
-        print("Displaying 3D mesh...")
+        print(f"  Saving 3D mesh... {mesh_path}")
         visualize_bar_mesh(
             nodes,
             elements,
             title=f"3D FEM Mesh - {num_elements} hexahedral elements",
             alpha=0.4,
-            show=True
+            save_path=mesh_path,
+            show=False
         )
+
+        print(f"\nImages saved:")
+        print(f"  - {profile_path}")
+        print(f"  - {mesh_path}")
     elif args.no_plot:
         print("\n(Skipping visualization - --no-plot specified)")
     else:

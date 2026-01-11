@@ -40,3 +40,6 @@ htmlcov/
 
 # Distribution
 *.whl
+
+# Temporary output
+temp/
