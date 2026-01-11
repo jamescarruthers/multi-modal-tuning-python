@@ -1,0 +1,25 @@
+Bar Optimization Results: G#4
+==================================================
+
+Note: G#4 (415.30 Hz)
+Material: Sapele
+Tuning ratio: 1:3:6
+
+Bar Dimensions:
+  Length: 465.3 mm
+  Width: 32.0 mm
+  Height: 24.0 mm
+
+Frequencies:
+  f1: 345.37 Hz (target: 415.30 Hz, -319.2 cents)
+  f2: 1026.72 Hz (target: 1245.91 Hz, -335.0 cents)
+  f3: 2085.72 Hz (target: 2491.83 Hz, -308.0 cents)
+
+Tuning Error: 2.8585%
+Max Error: 335.0 cents
+
+Cut Geometry (symmetric about center):
+  Cut 1: lambda = 147.27 mm, h = 19.40 mm
+          (width = 294.5 mm, depth = 4.60 mm)
+  Cut 2: lambda = 87.90 mm, h = 17.86 mm
+          (width = 175.8 mm, depth = 6.14 mm)

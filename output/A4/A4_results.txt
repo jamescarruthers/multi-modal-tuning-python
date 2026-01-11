@@ -1,0 +1,25 @@
+Bar Optimization Results: A4
+==================================================
+
+Note: A4 (440.00 Hz)
+Material: Sapele
+Tuning ratio: 1:3:6
+
+Bar Dimensions:
+  Length: 451.7 mm
+  Width: 32.0 mm
+  Height: 24.0 mm
+
+Frequencies:
+  f1: 366.67 Hz (target: 440.00 Hz, -315.6 cents)
+  f2: 1084.41 Hz (target: 1320.00 Hz, -340.4 cents)
+  f3: 2119.44 Hz (target: 2640.00 Hz, -380.2 cents)
+
+Tuning Error: 3.2112%
+Max Error: 380.2 cents
+
+Cut Geometry (symmetric about center):
+  Cut 1: lambda = 177.40 mm, h = 19.49 mm
+          (width = 354.8 mm, depth = 4.51 mm)
+  Cut 2: lambda = 62.93 mm, h = 17.49 mm
+          (width = 125.9 mm, depth = 6.51 mm)

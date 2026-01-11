@@ -50,6 +50,24 @@ from .utils.note_utils import (
     frequency_error_cents,
 )
 
+from .utils.bar_length_finder import (
+    find_optimal_length,
+    find_lengths_for_notes,
+    compute_f1_for_uniform_bar,
+    estimate_length_from_theory,
+    LengthSearchResult,
+    BarLengthResult,
+)
+
+from .visualization.bar_diagrams import (
+    generate_2d_profile_diagram,
+    generate_3d_isometric_diagram,
+    generate_bar_diagrams,
+)
+
+from .physics.frequencies import compute_frequencies_from_genes
+from .physics.bar_profile import genes_to_cuts, generate_profile_points
+
 __version__ = "1.0.0"
 __all__ = [
     # Types
@@ -87,4 +105,19 @@ __all__ = [
     "midi_number_to_note",
     "generate_notes_in_range",
     "frequency_error_cents",
+    # Bar length finder
+    "find_optimal_length",
+    "find_lengths_for_notes",
+    "compute_f1_for_uniform_bar",
+    "estimate_length_from_theory",
+    "LengthSearchResult",
+    "BarLengthResult",
+    # Visualization
+    "generate_2d_profile_diagram",
+    "generate_3d_isometric_diagram",
+    "generate_bar_diagrams",
+    # Physics
+    "compute_frequencies_from_genes",
+    "genes_to_cuts",
+    "generate_profile_points",
 ]
