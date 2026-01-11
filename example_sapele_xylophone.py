@@ -43,6 +43,7 @@ from multi_modal_tuning.physics.bar_profile import (
     generate_element_heights,
     generate_adaptive_mesh_1d,
     genes_to_cuts,
+    check_mesh_resolution,
 )
 from multi_modal_tuning.physics.visualization import (
     visualize_bar_mesh,
@@ -175,6 +176,13 @@ def main():
     # Get cut genes from result
     cut_genes = result.best_individual.genes[:4]  # 2 cuts * 2 params
     cuts = genes_to_cuts(cut_genes)
+
+    # Check mesh resolution is adequate for the cut geometry
+    check_mesh_resolution(
+        cuts, bar.L, args.nx_3d,
+        adaptive=args.adaptive,
+        refinement_factor=args.refinement
+    )
 
     # Generate mesh - adaptive or uniform
     if args.adaptive:
