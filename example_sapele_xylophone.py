@@ -31,7 +31,12 @@ from multi_modal_tuning import (
     note_to_frequency,
     AnalysisMode,
 )
-from multi_modal_tuning.physics.fem_3d import generate_bar_mesh_3d, compute_frequencies_3d
+from multi_modal_tuning.physics.fem_3d import (
+    generate_bar_mesh_3d,
+    compute_frequencies_3d,
+    compute_frequencies_3d_classified,
+    get_bending_frequencies_3d,
+)
 from multi_modal_tuning.physics.bar_profile import generate_element_heights, genes_to_cuts
 from multi_modal_tuning.physics.visualization import (
     visualize_bar_mesh,
@@ -229,24 +234,24 @@ def main():
         print("\n(Skipping visualization - matplotlib not available)")
 
     # =========================================================================
-    # STEP 4: Run 3D FEM analysis and compare
+    # STEP 4: Run 3D FEM analysis with mode classification
     # =========================================================================
     print("\n" + "=" * 70)
-    print("STEP 4: Compare 2D vs 3D Frequency Analysis")
+    print("STEP 4: 3D Analysis with Mode Classification")
     print("=" * 70)
 
-    print(f"\nRunning 3D solid element analysis...")
-    print(f"  (This may take a moment...)")
+    print(f"\nRunning 3D solid element analysis with mode classification...")
+    print(f"  (Using Soares' corner displacement method)")
 
     start = time.time()
-    freqs_3d = compute_frequencies_3d(
+    all_freqs_3d, classified_modes, _ = compute_frequencies_3d_classified(
         element_heights,
         bar.L,
         bar.b,
         material.E,
         material.rho,
         material.nu,
-        num_modes=3,
+        num_modes=15,  # Request more modes for classification
         ny=args.ny,
         nz=args.nz
     )
@@ -254,43 +259,63 @@ def main():
 
     print(f"\n3D Analysis completed in {elapsed_3d:.1f} seconds")
 
+    # Show all classified modes
+    print(f"\nClassified modes found:")
+    for mode_type, modes in classified_modes.items():
+        if modes:
+            freq_list = ", ".join(f"{m['frequency']:.1f}" for m in modes[:4])
+            suffix = "..." if len(modes) > 4 else ""
+            print(f"  {mode_type.replace('_', ' ').title()}: {freq_list}{suffix} Hz ({len(modes)} modes)")
+
+    # Extract bending frequencies for comparison
+    bending_modes = classified_modes['vertical_bending']
+    freqs_3d_bending = [m['frequency'] for m in bending_modes[:3]]
+
     # =========================================================================
-    # STEP 5: Results comparison
+    # STEP 5: Results comparison (bending modes only)
     # =========================================================================
     print("\n" + "=" * 70)
-    print("RESULTS COMPARISON: 2D Beam vs 3D Solid Elements")
+    print("RESULTS COMPARISON: 2D Beam vs 3D Vertical Bending Modes")
     print("=" * 70)
 
-    print(f"\n{'Mode':<6} {'Target':<12} {'2D Beam':<12} {'3D Solid':<12} {'2D Error':<12} {'3D Error':<12} {'Δ(3D-2D)':<10}")
-    print("-" * 76)
+    print(f"\n{'Mode':<6} {'Target':<12} {'2D Beam':<12} {'3D Bending':<12} {'2D Error':<12} {'3D Error':<12} {'Δ(3D-2D)':<10}")
+    print("-" * 78)
 
-    for i in range(min(len(freqs_2d), len(freqs_3d), len(target_frequencies))):
+    num_compare = min(len(freqs_2d), len(freqs_3d_bending), len(target_frequencies))
+    for i in range(num_compare):
         target = target_frequencies[i]
         f2d = freqs_2d[i]
-        f3d = freqs_3d[i]
+        f3d = freqs_3d_bending[i] if i < len(freqs_3d_bending) else 0
 
         cents_2d = 1200 * (f2d / target - 1) if target > 0 else 0
-        cents_3d = 1200 * (f3d / target - 1) if target > 0 else 0
-        delta = f3d - f2d
+        cents_3d = 1200 * (f3d / target - 1) if target > 0 and f3d > 0 else 0
+        delta = f3d - f2d if f3d > 0 else 0
 
-        print(f"{i+1:<6} {target:<12.1f} {f2d:<12.1f} {f3d:<12.1f} {cents_2d:>+8.1f} ct  {cents_3d:>+8.1f} ct  {delta:>+8.1f} Hz")
+        print(f"V{i+1:<5} {target:<12.1f} {f2d:<12.1f} {f3d:<12.1f} {cents_2d:>+8.1f} ct  {cents_3d:>+8.1f} ct  {delta:>+8.1f} Hz")
 
-    print("-" * 76)
+    print("-" * 78)
 
     # Summary
     print(f"\nTiming:")
     print(f"  2D optimization: {elapsed_2d:.1f} seconds ({result.generations} generations)")
     print(f"  3D single analysis: {elapsed_3d:.1f} seconds")
-    print(f"  Speedup factor: {elapsed_3d / (elapsed_2d / result.generations):.1f}x slower per evaluation")
+    if result.generations > 0:
+        print(f"  Speedup factor: {elapsed_3d / (elapsed_2d / result.generations):.1f}x slower per evaluation")
 
-    print(f"\nConclusion:")
-    avg_diff = sum(abs(freqs_3d[i] - freqs_2d[i]) for i in range(min(len(freqs_2d), len(freqs_3d)))) / min(len(freqs_2d), len(freqs_3d))
-    print(f"  Average |3D - 2D| difference: {avg_diff:.1f} Hz")
+    if num_compare > 0 and len(freqs_3d_bending) >= num_compare:
+        avg_diff = sum(abs(freqs_3d_bending[i] - freqs_2d[i]) for i in range(num_compare)) / num_compare
+        print(f"\nConclusion:")
+        print(f"  Average |3D - 2D| bending mode difference: {avg_diff:.1f} Hz")
 
-    if avg_diff < 20:
-        print(f"  The 2D beam model provides a good approximation for this bar geometry.")
+        if avg_diff < 20:
+            print(f"  The 2D beam model provides a good approximation for this bar geometry.")
+        elif avg_diff < 50:
+            print(f"  Moderate differences - 3D effects are noticeable but 2D is reasonable.")
+        else:
+            print(f"  Significant differences - consider using 3D analysis for final verification.")
     else:
-        print(f"  Significant differences - consider using 3D analysis for final verification.")
+        print(f"\nWarning: Could not find enough vertical bending modes for comparison.")
+        print(f"  This may indicate the mode classification needs adjustment for this geometry.")
 
     print("\nOptimized genes (for seeding future runs):")
     print(f"  {result.best_individual.genes}")

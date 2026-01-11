@@ -507,3 +507,299 @@ def compute_frequencies_3d(
     frequencies = solve_eigenvalue_3d(K, M, num_modes, use_sparse)
 
     return frequencies
+
+
+# =============================================================================
+# Mode Classification (Soares' corner displacement method)
+# =============================================================================
+
+def find_corner_nodes(nodes: np.ndarray, tol: float = 1e-6) -> Tuple[int, int]:
+    """
+    Find the two corner nodes at x=0 end of bar.
+
+    Assumes bar is oriented with length along x-axis,
+    width along y-axis, height along z-axis.
+
+    Args:
+        nodes: (num_nodes, 3) array of node coordinates
+        tol: Tolerance for coordinate comparison
+
+    Returns:
+        Tuple (s1_idx, s2_idx) of corner node indices at x=0 end
+    """
+    # Find nodes at x ≈ 0 (one end of bar)
+    x_min = nodes[:, 0].min()
+    end_mask = np.abs(nodes[:, 0] - x_min) < tol
+    end_nodes = np.where(end_mask)[0]
+
+    # Find corners at top surface (max z)
+    z_vals = nodes[end_nodes, 2]
+    z_max = z_vals.max()
+    top_mask = np.abs(z_vals - z_max) < tol
+    top_nodes = end_nodes[top_mask]
+    top_y = nodes[top_nodes, 1]
+
+    s1_idx = top_nodes[np.argmax(top_y)]  # max y
+    s2_idx = top_nodes[np.argmin(top_y)]  # min y
+
+    return int(s1_idx), int(s2_idx)
+
+
+def classify_mode_soares(
+    mode_shape: np.ndarray,
+    nodes: np.ndarray,
+    corner_indices: Tuple[int, int]
+) -> str:
+    """
+    Classify mode using Soares' corner displacement method.
+
+    Args:
+        mode_shape: Eigenvector (n_nodes * 3,) with [ux1,uy1,uz1, ux2,uy2,uz2, ...]
+        nodes: Node coordinates (n_nodes, 3)
+        corner_indices: Tuple (s1_idx, s2_idx) of corner node indices at x=0 end
+
+    Returns:
+        mode_type: 'vertical_bending', 'torsional', 'lateral', or 'axial'
+    """
+    s1_idx, s2_idx = corner_indices
+
+    # Extract 3D displacement at each corner
+    psi_s1 = mode_shape[s1_idx*3 : s1_idx*3 + 3]  # [ψx, ψy, ψz]
+    psi_s2 = mode_shape[s2_idx*3 : s2_idx*3 + 3]
+
+    # Find direction of maximum displacement at s1
+    abs_psi = np.abs(psi_s1)
+    max_dir = np.argmax(abs_psi)  # 0=x, 1=y, 2=z
+
+    if max_dir == 1:  # y-direction dominant
+        return 'lateral'
+
+    elif max_dir == 0:  # x-direction dominant
+        return 'axial'
+
+    else:  # z-direction dominant (max_dir == 2)
+        # Disambiguate vertical bending vs torsional
+        if np.sign(psi_s1[2]) == np.sign(psi_s2[2]):
+            return 'vertical_bending'
+        else:
+            return 'torsional'
+
+
+def classify_all_modes(
+    frequencies: List[float],
+    mode_shapes: np.ndarray,
+    nodes: np.ndarray
+) -> dict:
+    """
+    Classify all modes and organize by family.
+
+    Args:
+        frequencies: List of frequencies in Hz
+        mode_shapes: (n_dof, n_modes) array of eigenvectors
+        nodes: (n_nodes, 3) array of node coordinates
+
+    Returns:
+        Dict with frequencies organized by mode type:
+        {
+            'vertical_bending': [{'frequency': f, 'mode_index': i, 'mode_number': n}, ...],
+            'torsional': [...],
+            'lateral': [...],
+            'axial': [...]
+        }
+    """
+    corner_indices = find_corner_nodes(nodes)
+
+    classified = {
+        'vertical_bending': [],
+        'torsional': [],
+        'lateral': [],
+        'axial': []
+    }
+
+    for i, freq in enumerate(frequencies):
+        if i < mode_shapes.shape[1]:
+            shape = mode_shapes[:, i]
+            mode_type = classify_mode_soares(shape, nodes, corner_indices)
+            classified[mode_type].append({
+                'frequency': freq,
+                'mode_index': i,
+            })
+
+    # Sort each family by frequency and assign mode numbers
+    for family in classified:
+        classified[family].sort(key=lambda m: m['frequency'])
+        for j, mode in enumerate(classified[family]):
+            mode['mode_number'] = j + 1  # V1, V2, V3... or T1, T2...
+
+    return classified
+
+
+def solve_eigenvalue_3d_with_vectors(
+    K: np.ndarray,
+    M: np.ndarray,
+    num_modes: int,
+    use_sparse: bool = True
+) -> Tuple[List[float], np.ndarray]:
+    """
+    Solve generalized eigenvalue problem and return both frequencies and mode shapes.
+
+    Args:
+        K: Global stiffness matrix
+        M: Global mass matrix
+        num_modes: Number of modes to extract
+        use_sparse: Whether matrices are sparse
+
+    Returns:
+        Tuple of (frequencies in Hz, mode_shapes array)
+    """
+    if use_sparse:
+        num_request = min(num_modes + 12, K.shape[0] - 2)
+        sigma = 1.0
+
+        try:
+            eigenvalues, eigenvectors = eigsh(K, k=num_request, M=M, sigma=sigma, which='LM')
+        except Exception:
+            n = K.shape[0]
+            M_reg = M + 1e-10 * csr_matrix(np.eye(n))
+            eigenvalues, eigenvectors = eigsh(K, k=num_request, M=M_reg, sigma=sigma, which='LM')
+    else:
+        n = K.shape[0]
+        M_reg = M.copy()
+        for i in range(n):
+            M_reg[i, i] += 1e-12 * max(abs(M[i, i]), 1e-20)
+
+        try:
+            L = linalg.cholesky(M_reg, lower=True)
+            L_inv = linalg.solve_triangular(L, np.eye(n), lower=True)
+            K_tilde = L_inv @ K @ L_inv.T
+            K_tilde = (K_tilde + K_tilde.T) / 2
+            eigenvalues, eigenvectors_tilde = linalg.eigh(K_tilde)
+            eigenvectors = L_inv.T @ eigenvectors_tilde
+        except linalg.LinAlgError:
+            for i in range(n):
+                M_reg[i, i] += 1e-8
+            L = linalg.cholesky(M_reg, lower=True)
+            L_inv = linalg.solve_triangular(L, np.eye(n), lower=True)
+            K_tilde = L_inv @ K @ L_inv.T
+            K_tilde = (K_tilde + K_tilde.T) / 2
+            eigenvalues, eigenvectors_tilde = linalg.eigh(K_tilde)
+            eigenvectors = L_inv.T @ eigenvectors_tilde
+
+    # Sort by eigenvalue
+    sort_idx = np.argsort(eigenvalues)
+    eigenvalues = eigenvalues[sort_idx]
+    eigenvectors = eigenvectors[:, sort_idx]
+
+    # Filter rigid body modes
+    threshold = 100.0
+    elastic_mask = eigenvalues > threshold
+    elastic_eigenvalues = eigenvalues[elastic_mask]
+    elastic_eigenvectors = eigenvectors[:, elastic_mask]
+
+    # Convert to frequencies
+    frequencies = [math.sqrt(abs(ev)) / (2.0 * math.pi) for ev in elastic_eigenvalues[:num_modes]]
+    mode_shapes = elastic_eigenvectors[:, :num_modes]
+
+    return frequencies, mode_shapes
+
+
+def compute_frequencies_3d_classified(
+    element_heights: List[float],
+    length: float,
+    width: float,
+    E: float,
+    rho: float,
+    nu: float,
+    num_modes: int = 10,
+    ny: int = 2,
+    nz: int = 2
+) -> Tuple[List[float], dict, np.ndarray]:
+    """
+    Compute natural frequencies using 3D FEM with mode classification.
+
+    Returns frequencies, classified modes dict, and node coordinates.
+
+    Args:
+        element_heights: Height of each element along bar length (m)
+        length: Bar length (m)
+        width: Bar width (m)
+        E: Young's modulus (Pa)
+        rho: Density (kg/m^3)
+        nu: Poisson's ratio
+        num_modes: Number of modes to extract (request more for classification)
+        ny: Number of elements in width direction
+        nz: Number of elements in thickness direction
+
+    Returns:
+        Tuple of:
+        - all_frequencies: List of all frequencies
+        - classified: Dict with modes organized by type
+        - nodes: Node coordinates for visualization
+    """
+    nx = len(element_heights)
+
+    # Generate mesh
+    nodes, elements, _ = generate_bar_mesh_3d(
+        length, width, element_heights, nx, ny, nz
+    )
+
+    # Determine if we should use sparse matrices
+    num_dof = 3 * len(nodes)
+    use_sparse = num_dof > 1000
+
+    # Assemble matrices
+    K, M = assemble_global_matrices_3d(nodes, elements, E, nu, rho, use_sparse)
+
+    # Solve eigenvalue problem with mode shapes
+    frequencies, mode_shapes = solve_eigenvalue_3d_with_vectors(K, M, num_modes, use_sparse)
+
+    # Classify modes
+    classified = classify_all_modes(frequencies, mode_shapes, nodes)
+
+    return frequencies, classified, nodes
+
+
+def get_bending_frequencies_3d(
+    element_heights: List[float],
+    length: float,
+    width: float,
+    E: float,
+    rho: float,
+    nu: float,
+    num_bending_modes: int = 3,
+    ny: int = 2,
+    nz: int = 2
+) -> List[float]:
+    """
+    Compute only vertical bending frequencies from 3D FEM analysis.
+
+    This filters out torsional, lateral, and axial modes to return
+    only the vertical bending modes comparable to 2D beam analysis.
+
+    Args:
+        element_heights: Height of each element along bar length (m)
+        length: Bar length (m)
+        width: Bar width (m)
+        E: Young's modulus (Pa)
+        rho: Density (kg/m^3)
+        nu: Poisson's ratio
+        num_bending_modes: Number of bending modes to return
+        ny: Number of elements in width direction
+        nz: Number of elements in thickness direction
+
+    Returns:
+        List of vertical bending frequencies in Hz
+    """
+    # Request more modes to ensure we find enough bending modes
+    num_request = num_bending_modes * 4 + 6
+
+    _, classified, _ = compute_frequencies_3d_classified(
+        element_heights, length, width, E, rho, nu,
+        num_request, ny, nz
+    )
+
+    # Extract vertical bending frequencies
+    bending_modes = classified['vertical_bending']
+    bending_freqs = [m['frequency'] for m in bending_modes[:num_bending_modes]]
+
+    return bending_freqs
