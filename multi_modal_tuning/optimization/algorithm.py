@@ -178,7 +178,7 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     """
     bar = config.bar
     material = config.material
-    target_frequencies = config.target_frequencies
+    original_target_frequencies = config.target_frequencies
     num_cuts = config.num_cuts
     penalty_type = config.penalty_type
     penalty_weight = config.penalty_weight
@@ -186,6 +186,11 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     seed_genes = config.seed_genes
     on_progress = config.on_progress
     should_stop = config.should_stop
+
+    # Apply frequency offset for 2D/3D calibration
+    # If offset is positive, we aim for higher 2D frequencies to match 3D
+    offset = ea_params.frequency_offset
+    target_frequencies = [f * (1 + offset) for f in original_target_frequencies]
 
     bounds_constraints = BoundsConstraints(
         min_cut_width=ea_params.min_cut_width,
@@ -344,11 +349,12 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     # Extract only cut genes
     cut_genes = best_ever.genes[:num_cuts * 2]
 
+    # Evaluate against ORIGINAL targets (not offset-adjusted) for accurate reporting
     detailed = evaluate_detailed(
         cut_genes,
         effective_bar,
         material,
-        target_frequencies,
+        original_target_frequencies,
         penalty_type,
         penalty_weight,
         ea_params.num_elements,
@@ -359,7 +365,7 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
         best_individual=best_ever,
         cuts=genes_to_cuts(cut_genes),
         computed_frequencies=detailed.computed_frequencies,
-        target_frequencies=detailed.target_frequencies,
+        target_frequencies=original_target_frequencies,  # Report original targets
         tuning_error=detailed.tuning_error,
         max_error_cents=detailed.max_cents_error,
         errors_in_cents=detailed.cents_errors,
@@ -378,11 +384,15 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
     """
     bar = config.bar
     material = config.material
-    target_frequencies = config.target_frequencies
+    original_target_frequencies = config.target_frequencies
     num_cuts = config.num_cuts
     penalty_type = config.penalty_type
     penalty_weight = config.penalty_weight
     ea_params = config.ea_params or get_default_ea_parameters(num_cuts)
+
+    # Apply frequency offset for 2D/3D calibration
+    offset = ea_params.frequency_offset
+    target_frequencies = [f * (1 + offset) for f in original_target_frequencies]
     on_progress = config.on_progress
     should_stop = config.should_stop
 
@@ -512,11 +522,12 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
 
     cut_genes = best_ever.genes[:num_cuts * 2]
 
+    # Evaluate against ORIGINAL targets (not offset-adjusted) for accurate reporting
     detailed = evaluate_detailed(
         cut_genes,
         effective_bar,
         material,
-        target_frequencies,
+        original_target_frequencies,
         penalty_type,
         penalty_weight,
         ea_params.num_elements,
@@ -527,7 +538,7 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
         best_individual=best_ever,
         cuts=genes_to_cuts(cut_genes),
         computed_frequencies=detailed.computed_frequencies,
-        target_frequencies=detailed.target_frequencies,
+        target_frequencies=original_target_frequencies,  # Report original targets
         tuning_error=detailed.tuning_error,
         max_error_cents=detailed.max_cents_error,
         errors_in_cents=detailed.cents_errors,

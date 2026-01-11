@@ -75,6 +75,9 @@ class EAParameters:
     # 3D mesh parameters (only used when analysis_mode is SOLID_3D)
     num_elements_y: int = 2           # Elements in width direction
     num_elements_z: int = 2           # Elements in thickness direction
+    # Frequency offset for 2D/3D calibration (e.g., 0.05 = target 5% higher)
+    # Applied as: effective_target = target * (1 + offset)
+    frequency_offset: float = 0.0
 
 
 @dataclass
