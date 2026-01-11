@@ -2,7 +2,10 @@
 Multi-Modal Bar Tuning Optimization
 
 A Python library for optimizing percussion bar undercuts to achieve target
-harmonic frequencies using evolutionary algorithms and Timoshenko beam FEM.
+harmonic frequencies using evolutionary algorithms and FEM analysis.
+
+Supports both 2D Timoshenko beam elements (fast) and 3D solid hexahedral
+elements (more accurate) for frequency computation.
 
 Ported from the TypeScript/Rust reference implementation.
 """
@@ -18,6 +21,7 @@ from .types import (
     ProgressUpdate,
     VariableBounds,
     DetailedEvaluation,
+    AnalysisMode,
 )
 
 from .data.materials import MATERIALS, get_material, get_materials_by_category, KAPPA
@@ -59,6 +63,7 @@ __all__ = [
     "ProgressUpdate",
     "VariableBounds",
     "DetailedEvaluation",
+    "AnalysisMode",
     # Data
     "MATERIALS",
     "get_material",

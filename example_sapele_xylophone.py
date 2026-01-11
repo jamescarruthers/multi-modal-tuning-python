@@ -5,7 +5,14 @@ Bar: 450mm x 32mm x 24mm
 Material: Sapele
 Target note: F4 (349.23 Hz)
 Tuning ratio: 1:3:6 (xylophone)
+
+Supports both 2D (fast, default) and 3D (more accurate) FEM analysis.
+Usage:
+    python example_sapele_xylophone.py          # 2D analysis (default)
+    python example_sapele_xylophone.py --3d     # 3D solid element analysis
 """
+
+import argparse
 
 from multi_modal_tuning import (
     BarParameters,
@@ -16,10 +23,21 @@ from multi_modal_tuning import (
     get_preset,
     calculate_target_frequencies,
     note_to_frequency,
+    AnalysisMode,
 )
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Sapele Xylophone Bar Optimization")
+    parser.add_argument("--3d", dest="use_3d", action="store_true",
+                        help="Use 3D solid element analysis (slower but more accurate)")
+    parser.add_argument("--ny", type=int, default=2,
+                        help="Number of elements in width direction for 3D (default: 2)")
+    parser.add_argument("--nz", type=int, default=2,
+                        help="Number of elements in thickness direction for 3D (default: 2)")
+    args = parser.parse_args()
+
+    analysis_mode = AnalysisMode.SOLID_3D if args.use_3d else AnalysisMode.BEAM_2D
     # Bar dimensions (convert mm to meters)
     bar = BarParameters(
         L=0.450,      # 450mm length
@@ -51,23 +69,33 @@ def main():
     print(f"Target frequencies: {', '.join(f'{f:.1f} Hz' for f in target_frequencies)}")
 
     # EA parameters
+    # Use fewer elements for 3D to keep computation manageable
+    num_elements = 40 if args.use_3d else 120
+
     ea_params = EAParameters(
         population_size=60,
         max_generations=100,
         target_error=0.1,      # 0.1% target error
-        num_elements=120,
+        num_elements=num_elements,
         elitism_percent=10,
         crossover_percent=30,
         mutation_percent=60,
         mutation_strength=0.12,
         f1_priority=1.5,       # Slightly prioritize fundamental
+        analysis_mode=analysis_mode,
+        num_elements_y=args.ny,
+        num_elements_z=args.nz,
     )
 
+    analysis_str = "3D Solid Elements" if args.use_3d else "2D Timoshenko Beam"
     print(f"\nOptimization parameters:")
+    print(f"  Analysis mode: {analysis_str}")
     print(f"  Number of cuts: 2")
     print(f"  Population size: {ea_params.population_size}")
     print(f"  Max generations: {ea_params.max_generations}")
     print(f"  Target error: {ea_params.target_error}%")
+    if args.use_3d:
+        print(f"  3D mesh: {num_elements} x {args.ny} x {args.nz} elements")
 
     # Progress callback
     def on_progress(update):
