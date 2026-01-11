@@ -37,6 +37,15 @@ from .optimization.algorithm import (
     EAConfig,
 )
 
+from .utils.note_utils import (
+    note_to_frequency,
+    frequency_to_note,
+    note_to_midi_number,
+    midi_number_to_note,
+    generate_notes_in_range,
+    frequency_error_cents,
+)
+
 __version__ = "1.0.0"
 __all__ = [
     # Types
@@ -66,4 +75,11 @@ __all__ = [
     "run_adaptive_evolution",
     "get_default_ea_parameters",
     "EAConfig",
+    # Utils
+    "note_to_frequency",
+    "frequency_to_note",
+    "note_to_midi_number",
+    "midi_number_to_note",
+    "generate_notes_in_range",
+    "frequency_error_cents",
 ]
