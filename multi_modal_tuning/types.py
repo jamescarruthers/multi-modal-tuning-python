@@ -6,7 +6,14 @@ Uses dataclasses for clean, typed structures that mirror the TypeScript interfac
 
 from dataclasses import dataclass, field
 from typing import List, Optional, Literal
+from enum import Enum
 import math
+
+
+class AnalysisMode(Enum):
+    """FEM analysis mode selection."""
+    BEAM_2D = "2d"      # Timoshenko beam elements (fast, good for slender bars)
+    SOLID_3D = "3d"     # 3D hexahedral elements (accurate, slower)
 
 
 @dataclass
@@ -54,7 +61,7 @@ class EAParameters:
     mutation_strength: float = 0.1    # sigma for uniform mutation (0.05-0.2)
     max_generations: int = 100
     target_error: float = 0.01        # Stopping criterion (percentage)
-    num_elements: int = 150           # Ne for FEM discretization
+    num_elements: int = 150           # Ne for FEM discretization (x-direction for 3D)
     f1_priority: float = 1.0          # Weight multiplier for f1
     min_cut_width: float = 0.0        # Minimum width between cut boundaries (m)
     max_cut_width: float = 0.0        # Maximum cut width (2*lambda) (m), 0 = no limit
@@ -63,6 +70,14 @@ class EAParameters:
     max_length_trim: float = 0.0      # Max trim from each end (m), 0 = no trimming
     max_length_extend: float = 0.0    # Max extension from each end (m), 0 = no extension
     max_workers: int = 0              # Max worker threads (0 = auto)
+    # Analysis mode selection
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D
+    # 3D mesh parameters (only used when analysis_mode is SOLID_3D)
+    num_elements_y: int = 2           # Elements in width direction
+    num_elements_z: int = 2           # Elements in thickness direction
+    # Frequency offset for 2D/3D calibration (e.g., 0.05 = target 5% higher)
+    # Applied as: effective_target = target * (1 + offset)
+    frequency_offset: float = 0.0
 
 
 @dataclass

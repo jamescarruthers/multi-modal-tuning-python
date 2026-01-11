@@ -2,17 +2,19 @@
 Frequency Computation Module
 
 Main functions for computing natural frequencies of undercut bars
-using the FEM model.
+using the FEM model. Supports both 2D Timoshenko beam and 3D solid
+element analysis.
 """
 
-from typing import List
+from typing import List, Optional
 import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 
-from ..types import BarParameters, Material
+from ..types import BarParameters, Material, AnalysisMode
 from .bar_profile import genes_to_cuts
 from .fem_assembly import assemble_global_matrices, solve_generalized_eigenvalue
+from .fem_3d import compute_frequencies_3d
 
 
 def compute_frequencies(
@@ -22,7 +24,10 @@ def compute_frequencies(
     E: float,
     rho: float,
     nu: float,
-    num_modes: int
+    num_modes: int,
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
+    ny: int = 2,
+    nz: int = 2
 ) -> List[float]:
     """
     Compute natural frequencies for a bar with given element heights.
@@ -35,12 +40,23 @@ def compute_frequencies(
         rho: Density (kg/m^3)
         nu: Poisson's ratio
         num_modes: Number of modes to extract
+        analysis_mode: BEAM_2D (fast) or SOLID_3D (accurate)
+        ny: Number of elements in width direction (3D only)
+        nz: Number of elements in thickness direction (3D only)
 
     Returns:
         List of natural frequencies in Hz
     """
-    K, M = assemble_global_matrices(element_heights, le, b, E, rho, nu)
-    return solve_generalized_eigenvalue(K, M, num_modes)
+    if analysis_mode == AnalysisMode.SOLID_3D:
+        # 3D solid element analysis
+        length = le * len(element_heights)
+        return compute_frequencies_3d(
+            element_heights, length, b, E, rho, nu, num_modes, ny, nz
+        )
+    else:
+        # 2D Timoshenko beam analysis (default)
+        K, M = assemble_global_matrices(element_heights, le, b, E, rho, nu)
+        return solve_generalized_eigenvalue(K, M, num_modes)
 
 
 def compute_frequencies_from_genes(
@@ -49,7 +65,10 @@ def compute_frequencies_from_genes(
     material: Material,
     num_modes: int,
     num_elements: int,
-    num_cuts: int = 0
+    num_cuts: int = 0,
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
+    ny: int = 2,
+    nz: int = 2
 ) -> List[float]:
     """
     Compute frequencies directly from cut parameters (genes).
@@ -62,6 +81,9 @@ def compute_frequencies_from_genes(
         num_modes: Number of modes to extract
         num_elements: Number of finite elements
         num_cuts: Number of cuts (for determining length adjustment gene)
+        analysis_mode: BEAM_2D (fast) or SOLID_3D (accurate)
+        ny: Number of elements in width direction (3D only)
+        nz: Number of elements in thickness direction (3D only)
 
     Returns:
         List of natural frequencies in Hz
@@ -103,7 +125,10 @@ def compute_frequencies_from_genes(
         material.E,
         material.rho,
         material.nu,
-        num_modes
+        num_modes,
+        analysis_mode,
+        ny,
+        nz
     )
 
 
@@ -118,7 +143,10 @@ def _compute_single_fitness(
     nu: float,
     target_frequencies: List[float],
     f1_priority: float,
-    num_cuts: int
+    num_cuts: int,
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
+    ny: int = 2,
+    nz: int = 2
 ) -> float:
     """
     Compute fitness for a single individual.
@@ -160,7 +188,10 @@ def _compute_single_fitness(
             E,
             rho,
             nu,
-            len(target_frequencies)
+            len(target_frequencies),
+            analysis_mode,
+            ny,
+            nz
         )
     except Exception:
         return float('inf')
@@ -192,7 +223,10 @@ def batch_compute_fitness(
     num_elements: int,
     f1_priority: float = 1.0,
     num_cuts: int = 1,
-    max_workers: int = 0
+    max_workers: int = 0,
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
+    ny: int = 2,
+    nz: int = 2
 ) -> List[float]:
     """
     Batch compute fitness for entire population using multithreading.
@@ -206,6 +240,9 @@ def batch_compute_fitness(
         f1_priority: Weight multiplier for f1 (>1 prioritizes f1)
         num_cuts: Number of cuts per individual
         max_workers: Maximum number of worker threads (0 = auto)
+        analysis_mode: BEAM_2D (fast) or SOLID_3D (accurate)
+        ny: Number of elements in width direction (3D only)
+        nz: Number of elements in thickness direction (3D only)
 
     Returns:
         List of fitness values for each individual
@@ -231,7 +268,10 @@ def batch_compute_fitness(
                 material.nu,
                 target_frequencies,
                 f1_priority,
-                num_cuts
+                num_cuts,
+                analysis_mode,
+                ny,
+                nz
             ): idx
             for idx, genes in enumerate(genes_array)
         }

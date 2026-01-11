@@ -10,6 +10,7 @@ Key equations from paper:
 """
 
 from typing import List, Tuple, Optional
+from dataclasses import dataclass
 import math
 from ..types import Cut, BarParameters
 
@@ -225,6 +226,288 @@ def validate_cuts(cuts: List[Cut], bar: BarParameters) -> Tuple[bool, Optional[s
             return (False, f"Cut {i + 1} height ({cut.h}) out of bounds [{bar.hMin}, {bar.h0}]")
 
     return (True, None)
+
+
+def generate_adaptive_mesh_1d(
+    cuts: List[Cut],
+    L: float,
+    h0: float,
+    base_elements: int = 60,
+    refinement_factor: int = 4,
+    transition_width: float = 0.02
+) -> Tuple[List[float], List[float]]:
+    """
+    Generate adaptive 1D mesh with refinement at cut boundaries.
+
+    Uses finer elements near discontinuities (cut boundaries) and coarser
+    elements in uniform regions for better accuracy with fewer total elements.
+
+    Args:
+        cuts: Array of cuts
+        L: Bar length (m)
+        h0: Original height (m)
+        base_elements: Number of elements if mesh were uniform
+        refinement_factor: How many times finer the mesh is at boundaries
+        transition_width: Width of transition zone as fraction of L
+
+    Returns:
+        Tuple of (x_positions, element_heights):
+        - x_positions: List of element starting x-coordinates (length n)
+        - element_heights: Height at each element (length n)
+    """
+    sorted_cuts = sorted(cuts, key=lambda c: c.lambda_, reverse=True)
+    center_x = L / 2
+
+    # Find all discontinuity positions
+    discontinuities: List[float] = []
+    for cut in sorted_cuts:
+        if cut.lambda_ <= 0:
+            continue
+        left_boundary = center_x - cut.lambda_
+        right_boundary = center_x + cut.lambda_
+        discontinuities.append(left_boundary)
+        discontinuities.append(right_boundary)
+
+    discontinuities.sort()
+
+    # Define refinement zones around each discontinuity
+    transition_dist = transition_width * L
+
+    def is_near_discontinuity(x: float) -> bool:
+        """Check if position is near any discontinuity."""
+        for disc in discontinuities:
+            if abs(x - disc) < transition_dist:
+                return True
+        return False
+
+    # Generate adaptive element positions
+    # Base element size
+    base_dx = L / base_elements
+    fine_dx = base_dx / refinement_factor
+
+    x_positions: List[float] = [0.0]
+    current_x = 0.0
+
+    while current_x < L - 1e-10:
+        # Determine element size based on proximity to discontinuity
+        if is_near_discontinuity(current_x) or is_near_discontinuity(current_x + base_dx):
+            dx = fine_dx
+        else:
+            dx = base_dx
+
+        # Don't overshoot the bar length
+        if current_x + dx > L:
+            dx = L - current_x
+
+        current_x += dx
+        if current_x <= L:
+            x_positions.append(current_x)
+
+    # Ensure last position is exactly L
+    if abs(x_positions[-1] - L) > 1e-10:
+        x_positions[-1] = L
+
+    # Generate heights for each element
+    num_elements = len(x_positions) - 1
+    element_heights: List[float] = []
+
+    for i in range(num_elements):
+        x_start = x_positions[i]
+        x_end = x_positions[i + 1]
+        x_mid = (x_start + x_end) / 2
+
+        # Check if element contains a discontinuity
+        found_discontinuity = False
+        for disc_x in discontinuities:
+            if disc_x > x_start and disc_x < x_end:
+                # Element contains a discontinuity - use quadratic interpolation
+                dx1 = disc_x - x_start
+                dx2 = x_end - disc_x
+                h1 = compute_height(disc_x - 0.0001, sorted_cuts, L, h0)
+                h2 = compute_height(disc_x + 0.0001, sorted_cuts, L, h0)
+
+                # Quadratic weighting from Eq. 6
+                element_heights.append(math.sqrt((h1 * h1 * dx1 + h2 * h2 * dx2) / (dx1 + dx2)))
+                found_discontinuity = True
+                break
+
+        if not found_discontinuity:
+            # No discontinuity - use height at midpoint
+            element_heights.append(compute_height(x_mid, sorted_cuts, L, h0))
+
+    return x_positions, element_heights
+
+
+@dataclass
+class MeshResolutionWarning:
+    """Warning about mesh resolution vs cut geometry."""
+    feature_type: str       # 'cut_width', 'cut_spacing', 'boundary_region'
+    feature_size_mm: float  # Size of the geometric feature in mm
+    element_size_mm: float  # Size of the mesh element in mm
+    ratio: float            # element_size / feature_size (>1 means under-resolved)
+    message: str
+
+
+def analyze_mesh_resolution(
+    cuts: List[Cut],
+    L: float,
+    h0: float,
+    num_elements: int,
+    adaptive: bool = False,
+    refinement_factor: int = 4,
+    transition_width: float = 0.02
+) -> Tuple[List[MeshResolutionWarning], dict]:
+    """
+    Analyze whether mesh resolution is adequate for the cut geometry.
+
+    Checks if element sizes are small enough to accurately capture:
+    - Narrow cuts (small lambda values)
+    - Spacing between adjacent cut boundaries
+    - Sharp transitions at cut edges
+
+    Args:
+        cuts: List of cuts
+        L: Bar length (m)
+        h0: Original height (m)
+        num_elements: Number of elements for uniform mesh
+        adaptive: Whether adaptive meshing is used
+        refinement_factor: Refinement factor for adaptive mesh
+        transition_width: Transition width for adaptive mesh
+
+    Returns:
+        Tuple of (warnings, stats):
+        - warnings: List of resolution warnings
+        - stats: Dictionary with mesh statistics
+    """
+    warnings: List[MeshResolutionWarning] = []
+    sorted_cuts = sorted(cuts, key=lambda c: c.lambda_, reverse=True)
+
+    # Calculate element sizes
+    L_mm = L * 1000
+    base_element_size_mm = L_mm / num_elements
+
+    if adaptive:
+        fine_element_size_mm = base_element_size_mm / refinement_factor
+        min_element_size_mm = fine_element_size_mm
+    else:
+        min_element_size_mm = base_element_size_mm
+
+    # Collect all boundary positions (in mm from center)
+    boundaries_mm = []
+    for cut in sorted_cuts:
+        if cut.lambda_ > 0:
+            boundaries_mm.append(cut.lambda_ * 1000)
+
+    boundaries_mm.sort()
+
+    stats = {
+        'num_elements': num_elements,
+        'base_element_size_mm': base_element_size_mm,
+        'min_element_size_mm': min_element_size_mm,
+        'adaptive': adaptive,
+        'num_cuts': len([c for c in sorted_cuts if c.lambda_ > 0]),
+        'boundaries_mm': boundaries_mm,
+        'smallest_feature_mm': float('inf'),
+        'resolution_adequate': True
+    }
+
+    if not boundaries_mm:
+        return warnings, stats
+
+    # Check 1: Smallest cut region (innermost cut width = 2 * smallest lambda)
+    smallest_cut_width_mm = 2 * boundaries_mm[0]
+    stats['smallest_feature_mm'] = min(stats['smallest_feature_mm'], smallest_cut_width_mm)
+
+    if smallest_cut_width_mm < min_element_size_mm * 2:
+        ratio = min_element_size_mm / (smallest_cut_width_mm / 2)
+        warnings.append(MeshResolutionWarning(
+            feature_type='cut_width',
+            feature_size_mm=smallest_cut_width_mm,
+            element_size_mm=min_element_size_mm,
+            ratio=ratio,
+            message=f"Innermost cut region ({smallest_cut_width_mm:.1f}mm wide) may be under-resolved. "
+                    f"Element size {min_element_size_mm:.1f}mm should be <{smallest_cut_width_mm/2:.1f}mm for accuracy."
+        ))
+        stats['resolution_adequate'] = False
+
+    # Check 2: Spacing between adjacent cut boundaries
+    for i in range(1, len(boundaries_mm)):
+        spacing_mm = boundaries_mm[i] - boundaries_mm[i-1]
+        stats['smallest_feature_mm'] = min(stats['smallest_feature_mm'], spacing_mm)
+
+        if spacing_mm < min_element_size_mm * 2:
+            ratio = min_element_size_mm / (spacing_mm / 2)
+            warnings.append(MeshResolutionWarning(
+                feature_type='cut_spacing',
+                feature_size_mm=spacing_mm,
+                element_size_mm=min_element_size_mm,
+                ratio=ratio,
+                message=f"Cut boundary spacing ({spacing_mm:.1f}mm) may be under-resolved. "
+                        f"Element size {min_element_size_mm:.1f}mm should be <{spacing_mm/2:.1f}mm."
+            ))
+            stats['resolution_adequate'] = False
+
+    # Check 3: Recommend minimum elements based on geometry
+    min_feature_mm = stats['smallest_feature_mm']
+    if min_feature_mm < float('inf'):
+        recommended_element_size = min_feature_mm / 3  # At least 3 elements per feature
+        recommended_num_elements = int(L_mm / recommended_element_size)
+
+        stats['recommended_element_size_mm'] = recommended_element_size
+        stats['recommended_num_elements'] = recommended_num_elements
+
+        if recommended_num_elements > num_elements:
+            if adaptive:
+                # For adaptive, recommend higher refinement
+                needed_refinement = int(base_element_size_mm / recommended_element_size) + 1
+                stats['recommended_refinement'] = needed_refinement
+            else:
+                stats['recommended_num_elements'] = recommended_num_elements
+
+    return warnings, stats
+
+
+def check_mesh_resolution(
+    cuts: List[Cut],
+    L: float,
+    num_elements: int,
+    adaptive: bool = False,
+    refinement_factor: int = 4,
+    verbose: bool = True
+) -> bool:
+    """
+    Quick check if mesh resolution is adequate. Prints warnings if verbose.
+
+    Args:
+        cuts: List of cuts
+        L: Bar length (m)
+        num_elements: Number of elements
+        adaptive: Whether adaptive meshing is used
+        refinement_factor: Refinement factor for adaptive mesh
+        verbose: Print warnings
+
+    Returns:
+        True if resolution is adequate, False if there are warnings
+    """
+    warnings, stats = analyze_mesh_resolution(
+        cuts, L, 0.024,  # h0 doesn't matter for resolution check
+        num_elements, adaptive, refinement_factor
+    )
+
+    if verbose and warnings:
+        print(f"\n⚠️  Mesh Resolution Warnings:")
+        for w in warnings:
+            print(f"  - {w.message}")
+
+        if 'recommended_num_elements' in stats and not adaptive:
+            print(f"\n  Recommendation: Use {stats['recommended_num_elements']} elements "
+                  f"(currently {num_elements})")
+        elif 'recommended_refinement' in stats and adaptive:
+            print(f"\n  Recommendation: Use refinement_factor={stats['recommended_refinement']} "
+                  f"(currently {refinement_factor})")
+        print()
+
+    return len(warnings) == 0
 
 
 def generate_profile_points(

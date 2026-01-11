@@ -19,6 +19,7 @@ from ..types import (
     EAParameters,
     OptimizationResult,
     ProgressUpdate,
+    AnalysisMode,
 )
 from ..physics.frequencies import compute_frequencies_from_genes, batch_compute_fitness
 from ..physics.bar_profile import genes_to_cuts
@@ -61,7 +62,10 @@ def _compute_frequencies_and_errors(
     material: Material,
     target_frequencies: List[float],
     num_elements: int,
-    num_cuts: int
+    num_cuts: int,
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
+    ny: int = 2,
+    nz: int = 2
 ) -> dict:
     """Compute frequencies and cents errors for an individual."""
     try:
@@ -72,7 +76,10 @@ def _compute_frequencies_and_errors(
             material,
             len(target_frequencies),
             num_elements,
-            num_cuts
+            num_cuts,
+            analysis_mode,
+            ny,
+            nz
         )
 
         errors_in_cents = []
@@ -106,7 +113,10 @@ def _batch_evaluate_population(
     num_elements: int,
     f1_priority: float = 1.0,
     num_cuts: int = 1,
-    max_workers: int = 0
+    max_workers: int = 0,
+    analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
+    ny: int = 2,
+    nz: int = 2
 ) -> List[Individual]:
     """
     Batch evaluate population fitness using multithreading.
@@ -120,7 +130,10 @@ def _batch_evaluate_population(
         num_elements,
         f1_priority,
         num_cuts,
-        max_workers
+        max_workers,
+        analysis_mode,
+        ny,
+        nz
     )
 
     # Apply penalties if needed
@@ -165,7 +178,7 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     """
     bar = config.bar
     material = config.material
-    target_frequencies = config.target_frequencies
+    original_target_frequencies = config.target_frequencies
     num_cuts = config.num_cuts
     penalty_type = config.penalty_type
     penalty_weight = config.penalty_weight
@@ -173,6 +186,11 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     seed_genes = config.seed_genes
     on_progress = config.on_progress
     should_stop = config.should_stop
+
+    # Apply frequency offset for 2D/3D calibration
+    # If offset is positive, we aim for higher 2D frequencies to match 3D
+    offset = ea_params.frequency_offset
+    target_frequencies = [f * (1 + offset) for f in original_target_frequencies]
 
     bounds_constraints = BoundsConstraints(
         min_cut_width=ea_params.min_cut_width,
@@ -187,16 +205,21 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     f1_priority = ea_params.f1_priority
     has_length_adjust = ea_params.max_length_trim > 0 or ea_params.max_length_extend > 0
     max_workers = ea_params.max_workers
+    analysis_mode = ea_params.analysis_mode
+    ny = ea_params.num_elements_y
+    nz = ea_params.num_elements_z
 
     # Report Generation 0: uncut bar baseline
     if on_progress:
         uncut_bar = create_uncut_bar_individual(num_cuts, bounds, bar.h0)
         [evaluated_uncut] = _batch_evaluate_population(
             [uncut_bar], bar, material, target_frequencies,
-            penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers
+            penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
+            analysis_mode, ny, nz
         )
         freq_data = _compute_frequencies_and_errors(
-            evaluated_uncut.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts
+            evaluated_uncut.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
+            analysis_mode, ny, nz
         )
         on_progress(ProgressUpdate(
             generation=0,
@@ -214,7 +237,8 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     # Evaluate initial population
     population = _batch_evaluate_population(
         population, bar, material, target_frequencies,
-        penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers
+        penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
+        analysis_mode, ny, nz
     )
 
     # Calculate percentages for different operations
@@ -264,7 +288,8 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
             # Use adaptive mutation if length adjustment is enabled
             if has_length_adjust:
                 parent_freqs = compute_frequencies_from_genes(
-                    parent.genes, bar, material, 1, ea_params.num_elements, num_cuts
+                    parent.genes, bar, material, 1, ea_params.num_elements, num_cuts,
+                    analysis_mode, ny, nz
                 )
                 f1_error = parent_freqs[0] - target_frequencies[0] if parent_freqs else 0
                 freq_error = FrequencyError(f1_error=f1_error)
@@ -277,7 +302,8 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
         if new_offspring:
             evaluated_offspring = _batch_evaluate_population(
                 new_offspring, bar, material, target_frequencies,
-                penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers
+                penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
+                analysis_mode, ny, nz
             )
             next_generation.extend(evaluated_offspring)
 
@@ -295,7 +321,8 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
         if on_progress:
             stats = calculate_population_stats(population)
             freq_data = _compute_frequencies_and_errors(
-                best_ever.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts
+                best_ever.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
+                analysis_mode, ny, nz
             )
             on_progress(ProgressUpdate(
                 generation=generation,
@@ -322,11 +349,12 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     # Extract only cut genes
     cut_genes = best_ever.genes[:num_cuts * 2]
 
+    # Evaluate against ORIGINAL targets (not offset-adjusted) for accurate reporting
     detailed = evaluate_detailed(
         cut_genes,
         effective_bar,
         material,
-        target_frequencies,
+        original_target_frequencies,
         penalty_type,
         penalty_weight,
         ea_params.num_elements,
@@ -337,7 +365,7 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
         best_individual=best_ever,
         cuts=genes_to_cuts(cut_genes),
         computed_frequencies=detailed.computed_frequencies,
-        target_frequencies=detailed.target_frequencies,
+        target_frequencies=original_target_frequencies,  # Report original targets
         tuning_error=detailed.tuning_error,
         max_error_cents=detailed.max_cents_error,
         errors_in_cents=detailed.cents_errors,
@@ -356,11 +384,15 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
     """
     bar = config.bar
     material = config.material
-    target_frequencies = config.target_frequencies
+    original_target_frequencies = config.target_frequencies
     num_cuts = config.num_cuts
     penalty_type = config.penalty_type
     penalty_weight = config.penalty_weight
     ea_params = config.ea_params or get_default_ea_parameters(num_cuts)
+
+    # Apply frequency offset for 2D/3D calibration
+    offset = ea_params.frequency_offset
+    target_frequencies = [f * (1 + offset) for f in original_target_frequencies]
     on_progress = config.on_progress
     should_stop = config.should_stop
 
@@ -378,16 +410,21 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
     has_length_adjust = ea_params.max_length_trim > 0 or ea_params.max_length_extend > 0
     num_genes = num_cuts * 2 + 1 if has_length_adjust else num_cuts * 2
     max_workers = ea_params.max_workers
+    analysis_mode = ea_params.analysis_mode
+    ny = ea_params.num_elements_y
+    nz = ea_params.num_elements_z
 
     # Report Generation 0: uncut bar baseline
     if on_progress:
         uncut_bar = create_uncut_bar_individual(num_cuts, bounds, bar.h0)
         [evaluated_uncut] = _batch_evaluate_population(
             [uncut_bar], bar, material, target_frequencies,
-            penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers
+            penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
+            analysis_mode, ny, nz
         )
         freq_data = _compute_frequencies_and_errors(
-            evaluated_uncut.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts
+            evaluated_uncut.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
+            analysis_mode, ny, nz
         )
         on_progress(ProgressUpdate(
             generation=0,
@@ -407,7 +444,8 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
     # Evaluate initial population
     population = _batch_evaluate_population(
         population, bar, material, target_frequencies,
-        penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers
+        penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
+        analysis_mode, ny, nz
     )
 
     num_elite = max(1, int(ea_params.population_size * ea_params.elitism_percent / 100))
@@ -442,7 +480,8 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
         if new_offspring:
             evaluated_offspring = _batch_evaluate_population(
                 new_offspring, bar, material, target_frequencies,
-                penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers
+                penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
+                analysis_mode, ny, nz
             )
             next_generation.extend(evaluated_offspring)
 
@@ -457,7 +496,8 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
         if on_progress:
             stats = calculate_population_stats(population)
             freq_data = _compute_frequencies_and_errors(
-                best_ever.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts
+                best_ever.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
+                analysis_mode, ny, nz
             )
             on_progress(ProgressUpdate(
                 generation=generation,
@@ -482,11 +522,12 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
 
     cut_genes = best_ever.genes[:num_cuts * 2]
 
+    # Evaluate against ORIGINAL targets (not offset-adjusted) for accurate reporting
     detailed = evaluate_detailed(
         cut_genes,
         effective_bar,
         material,
-        target_frequencies,
+        original_target_frequencies,
         penalty_type,
         penalty_weight,
         ea_params.num_elements,
@@ -497,7 +538,7 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
         best_individual=best_ever,
         cuts=genes_to_cuts(cut_genes),
         computed_frequencies=detailed.computed_frequencies,
-        target_frequencies=detailed.target_frequencies,
+        target_frequencies=original_target_frequencies,  # Report original targets
         tuning_error=detailed.tuning_error,
         max_error_cents=detailed.max_cents_error,
         errors_in_cents=detailed.cents_errors,
