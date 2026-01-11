@@ -1,0 +1,34 @@
+Bar Optimization Results: D5
+==================================================
+
+Note: D5 (587.33 Hz)
+Material: Sapele
+Tuning ratio: 1:3:6
+
+Bar Dimensions:
+  Length: 387.1 mm
+  Width: 32.0 mm
+  Height: 24.0 mm
+
+3D FEM Analysis:
+  Elements: 120 x 2 x 3
+  Mode classification: Soares' corner displacement method
+
+Frequencies (vertical bending modes):
+  f1: 598.70 Hz (target: 587.33 Hz, +33.2 cents)
+  f2: 1766.65 Hz (target: 1761.99 Hz, +4.6 cents)
+  f3: 3486.18 Hz (target: 3523.98 Hz, -18.7 cents)
+
+Tuning Error: 0.0195%
+Max Error: 33.2 cents
+
+2D/3D Frequency Offset:
+  f1: +16.32 Hz
+  f2: +51.07 Hz
+  f3: +103.28 Hz
+
+Cut Geometry (symmetric about center):
+  Cut 1: lambda = 191.73 mm, h = 23.67 mm
+          (width = 383.5 mm, depth = 0.33 mm)
+  Cut 2: lambda = 72.54 mm, h = 19.93 mm
+          (width = 145.1 mm, depth = 4.07 mm)

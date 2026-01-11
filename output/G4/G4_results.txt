@@ -1,0 +1,34 @@
+Bar Optimization Results: G4
+==================================================
+
+Note: G4 (392.00 Hz)
+Material: Sapele
+Tuning ratio: 1:3:6
+
+Bar Dimensions:
+  Length: 488.4 mm
+  Width: 32.0 mm
+  Height: 24.0 mm
+
+3D FEM Analysis:
+  Elements: 120 x 2 x 3
+  Mode classification: Soares' corner displacement method
+
+Frequencies (vertical bending modes):
+  f1: 388.88 Hz (target: 392.00 Hz, -13.8 cents)
+  f2: 1155.10 Hz (target: 1175.99 Hz, -31.0 cents)
+  f3: 2278.33 Hz (target: 2351.97 Hz, -55.1 cents)
+
+Tuning Error: 0.0397%
+Max Error: 55.1 cents
+
+2D/3D Frequency Offset:
+  f1: +13.63 Hz
+  f2: +33.85 Hz
+  f3: +65.53 Hz
+
+Cut Geometry (symmetric about center):
+  Cut 1: lambda = 88.60 mm, h = 20.50 mm
+          (width = 177.2 mm, depth = 3.50 mm)
+  Cut 2: lambda = 0.86 mm, h = 11.12 mm
+          (width = 1.7 mm, depth = 12.88 mm)

@@ -3,9 +3,10 @@ Example: Xylophone Range Optimization
 
 This example demonstrates a complete workflow for generating a range of xylophone bars:
 1. Takes a note range (e.g., F4 to F5), bar dimensions, material, and tuning ratio
-2. Finds optimal bar lengths using the 3D FEM solver
+2. Finds optimal bar lengths using the 2D FEM solver
 3. Runs multi-stage optimization: 2D fast -> 3D correction -> 2D refined -> 3D final
-4. Generates both 2D profile and 3D isometric diagrams for each bar
+4. Uses proper 3D solid element FEM with mode classification for verification
+5. Generates both 2D profile and 3D mesh diagrams for each bar
 
 Usage:
     python example_xylophone_range.py
@@ -13,8 +14,8 @@ Usage:
 Output:
     output/
     ├── F4/
-    │   ├── F4_2d_profile.png
-    │   ├── F4_3d_isometric.png
+    │   ├── F4_profile.png
+    │   ├── F4_mesh_3d.png
     │   └── F4_results.txt
     ├── Fs4/  (F#4)
     │   └── ...
@@ -34,6 +35,7 @@ from multi_modal_tuning import (
     EAConfig,
     OptimizationResult,
     Cut,
+    AnalysisMode,
     # Data
     MATERIALS,
     get_preset,
@@ -48,8 +50,20 @@ from multi_modal_tuning import (
     # Physics
     compute_frequencies_from_genes,
     genes_to_cuts,
-    # Visualization
-    generate_bar_diagrams,
+)
+
+# Import 3D FEM functions
+from multi_modal_tuning.physics.fem_3d import (
+    generate_bar_mesh_3d,
+    compute_frequencies_3d_classified,
+)
+from multi_modal_tuning.physics.bar_profile import (
+    generate_element_heights,
+)
+from multi_modal_tuning.physics.visualization import (
+    visualize_bar_mesh,
+    visualize_bar_profile,
+    HAS_MATPLOTLIB,
 )
 
 
@@ -75,9 +89,11 @@ POPULATION_SIZE = 50
 MAX_GENERATIONS = 100
 TARGET_ERROR = 0.05         # Target tuning error (%)
 
-# FEM discretization - keep these similar so 2D/3D offset is meaningful
-NUM_ELEMENTS_2D = 120       # For optimization (matches example_sapele_xylophone)
-NUM_ELEMENTS_3D = 320       # For verification (same resolution for accurate offset)
+# FEM discretization
+NUM_ELEMENTS_2D = 120       # For 2D optimization
+NUM_ELEMENTS_3D_X = 120     # Elements in length direction for 3D
+NY = 2                      # Elements in width direction for 3D
+NZ = 24                      # Elements in thickness direction for 3D
 
 
 # ============================================================================
@@ -108,6 +124,63 @@ class BarResult:
 # CORE FUNCTIONS
 # ============================================================================
 
+def generate_bar_visualizations(
+    bar: BarParameters,
+    cuts: List[Cut],
+    note_name: str,
+    frequencies: List[float],
+    target_frequencies: List[float],
+    output_dir: str,
+    material
+) -> tuple:
+    """Generate 2D profile and 3D mesh visualizations using physics module."""
+
+    if not HAS_MATPLOTLIB:
+        print("    Warning: matplotlib not available, skipping visualization")
+        return None, None
+
+    safe_note_name = note_name.replace('#', 's').replace('b', 'b')
+
+    # Generate element heights for mesh
+    element_heights = generate_element_heights(cuts, bar.L, bar.h0, NUM_ELEMENTS_3D_X)
+
+    # Generate 3D mesh
+    nodes, elements, _ = generate_bar_mesh_3d(
+        bar.L, bar.b, element_heights, NUM_ELEMENTS_3D_X, NY, NZ
+    )
+
+    # Build title with frequency info
+    freq_info = []
+    for i, (f, ft) in enumerate(zip(frequencies, target_frequencies)):
+        error_cents = 1200 * math.log2(f / ft) if ft > 0 else 0
+        freq_info.append(f"f{i+1}={f:.1f}Hz ({error_cents:+.1f}¢)")
+    freq_str = ", ".join(freq_info)
+
+    # Save 2D profile
+    profile_path = os.path.join(output_dir, f'{safe_note_name}_profile.png')
+    visualize_bar_profile(
+        element_heights,
+        bar.L,
+        bar.h0,
+        title=f"{note_name} Bar Profile - {bar.L*1000:.1f}mm x {bar.b*1000:.1f}mm x {bar.h0*1000:.1f}mm\n{freq_str}",
+        save_path=profile_path,
+        show=False
+    )
+
+    # Save 3D mesh
+    mesh_path = os.path.join(output_dir, f'{safe_note_name}_mesh_3d.png')
+    visualize_bar_mesh(
+        nodes,
+        elements,
+        title=f"{note_name} - 3D FEM Mesh ({len(elements)} elements)",
+        alpha=0.4,
+        save_path=mesh_path,
+        show=False
+    )
+
+    return profile_path, mesh_path
+
+
 def process_single_bar(
     note_name: str,
     note_frequency: float,
@@ -123,11 +196,11 @@ def process_single_bar(
     Process a single bar through the full multi-stage optimization pipeline.
 
     Pipeline:
-    1. Find optimal length using 3D FEM
+    1. Find optimal length using 2D FEM (fast)
     2. Run fast 2D optimization
-    3. Compute 3D frequencies to get offset
+    3. Compute 3D frequencies with mode classification to get offset
     4. Run corrected 2D optimization
-    5. Final 3D verification
+    5. Final 3D verification with mode classification
     6. Generate diagrams
     """
     start_time = time.time()
@@ -144,7 +217,7 @@ def process_single_bar(
             print(f"Target frequencies: {', '.join(f'{f:.1f} Hz' for f in target_frequencies)}")
 
         # ----------------------------------------------------------------
-        # Stage 1: Find optimal bar length using 3D FEM
+        # Stage 1: Find optimal bar length using 2D FEM (fast)
         # ----------------------------------------------------------------
         if verbose:
             print(f"\n[1/5] Finding optimal bar length...")
@@ -158,7 +231,8 @@ def process_single_bar(
             max_length=MAX_BAR_LENGTH,
             tolerance_cents=2.0,
             max_iterations=30,
-            num_elements=NUM_ELEMENTS_3D
+            num_elements=NUM_ELEMENTS_2D,
+            analysis_mode=AnalysisMode.BEAM_2D  # Use 2D for speed
         )
 
         initial_length_mm = length_result.length
@@ -192,6 +266,7 @@ def process_single_bar(
             f1_priority=1.5,
             max_length_trim=0.02,    # Allow up to 20mm trim from each end
             max_length_extend=0.02,  # Allow up to 20mm extension from each end
+            analysis_mode=AnalysisMode.BEAM_2D,
         )
 
         config_2d = EAConfig(
@@ -223,28 +298,46 @@ def process_single_bar(
                 print(f"      f{i+1}: {f:.1f} Hz (target: {target_frequencies[i]:.1f} Hz)")
 
         # ----------------------------------------------------------------
-        # Stage 3: 3D analysis to compute offset
+        # Stage 3: 3D analysis with mode classification to compute offset
         # ----------------------------------------------------------------
         if verbose:
-            print(f"\n[3/5] Computing 3D frequency offset...")
+            print(f"\n[3/5] Computing 3D frequency offset (with mode classification)...")
 
-        # Compute frequencies using 3D FEM with the 2D-optimized genes
-        freqs_3d_check = compute_frequencies_from_genes(
-            result_2d.best_individual.genes,
-            bar,
-            material,
-            num_modes,
-            NUM_ELEMENTS_3D,
-            num_cuts
+        # Get cuts from 2D result
+        cuts_2d = genes_to_cuts(result_2d.best_individual.genes[:num_cuts * 2])
+
+        # Generate element heights for 3D analysis
+        element_heights = generate_element_heights(cuts_2d, bar.L, bar.h0, NUM_ELEMENTS_3D_X)
+
+        # Run 3D FEM with mode classification
+        all_freqs_3d, classified_modes, _ = compute_frequencies_3d_classified(
+            element_heights,
+            bar.L,
+            bar.b,
+            material.E,
+            material.rho,
+            material.nu,
+            num_modes=10,  # Request more modes for classification
+            ny=NY,
+            nz=NZ
         )
+
+        # Extract vertical bending modes (what we care about for xylophones)
+        bending_modes = classified_modes.get('vertical_bending', [])
+        freqs_3d_check = [m['frequency'] for m in bending_modes[:num_modes]]
+
+        # Pad if we didn't get enough bending modes
+        while len(freqs_3d_check) < num_modes:
+            freqs_3d_check.append(all_freqs_3d[len(freqs_3d_check)] if len(freqs_3d_check) < len(all_freqs_3d) else 0)
 
         # Calculate offset: how much 3D differs from 2D
         frequency_offset = [f3d - f2d for f3d, f2d in zip(freqs_3d_check, result_2d.computed_frequencies)]
 
         if verbose:
+            print(f"    3D bending modes found: {len(bending_modes)}")
             print(f"    Frequency offset (3D - 2D):")
-            for i, offset in enumerate(frequency_offset):
-                print(f"      f{i+1}: {offset:+.2f} Hz")
+            for i, (f2d, f3d, offset) in enumerate(zip(result_2d.computed_frequencies, freqs_3d_check, frequency_offset)):
+                print(f"      f{i+1}: 2D={f2d:.1f} Hz, 3D={f3d:.1f} Hz, offset={offset:+.2f} Hz")
 
         # ----------------------------------------------------------------
         # Stage 4: Corrected 2D optimization
@@ -269,7 +362,11 @@ def process_single_bar(
             mutation_percent=60,
             mutation_strength=0.10,
             f1_priority=1.5,
+            analysis_mode=AnalysisMode.BEAM_2D,
         )
+
+        # Only use the cut genes as seed (exclude length adjustment gene if present)
+        seed_genes = result_2d.best_individual.genes[:num_cuts * 2]
 
         config_corrected = EAConfig(
             bar=bar,
@@ -278,7 +375,7 @@ def process_single_bar(
             num_cuts=num_cuts,
             ea_params=ea_params_corrected,
             on_progress=lambda u: None,
-            seed_genes=result_2d.best_individual.genes,  # Seed from previous result
+            seed_genes=seed_genes,  # Seed from previous result (cut genes only)
         )
 
         result_corrected = run_evolutionary_algorithm(config_corrected)
@@ -287,19 +384,37 @@ def process_single_bar(
             print(f"    Corrected 2D result: {result_corrected.tuning_error:.4f}% error")
 
         # ----------------------------------------------------------------
-        # Stage 5: Final 3D verification
+        # Stage 5: Final 3D verification with mode classification
         # ----------------------------------------------------------------
         if verbose:
             print(f"\n[5/5] Final 3D verification...")
 
-        final_freqs = compute_frequencies_from_genes(
-            result_corrected.best_individual.genes,
-            bar,
-            material,
-            num_modes,
-            NUM_ELEMENTS_3D,
-            num_cuts
+        # Get final cuts
+        cuts = genes_to_cuts(result_corrected.best_individual.genes[:num_cuts * 2])
+
+        # Generate element heights for final 3D analysis
+        element_heights_final = generate_element_heights(cuts, bar.L, bar.h0, NUM_ELEMENTS_3D_X)
+
+        # Run final 3D FEM with mode classification
+        all_freqs_final, classified_modes_final, _ = compute_frequencies_3d_classified(
+            element_heights_final,
+            bar.L,
+            bar.b,
+            material.E,
+            material.rho,
+            material.nu,
+            num_modes=10,
+            ny=NY,
+            nz=NZ
         )
+
+        # Extract vertical bending modes for final frequencies
+        bending_modes_final = classified_modes_final.get('vertical_bending', [])
+        final_freqs = [m['frequency'] for m in bending_modes_final[:num_modes]]
+
+        # Pad if needed
+        while len(final_freqs) < num_modes:
+            final_freqs.append(all_freqs_final[len(final_freqs)] if len(final_freqs) < len(all_freqs_final) else 0)
 
         # Calculate final errors
         errors_cents = [frequency_error_cents(f, ft) for f, ft in zip(final_freqs, target_frequencies)]
@@ -310,14 +425,17 @@ def process_single_bar(
         tuning_error = 100 * sum(w * ((f - ft) / ft) ** 2 for w, f, ft in zip(weights, final_freqs, target_frequencies)) / sum(weights)
 
         if verbose:
-            print(f"    Final 3D frequencies:")
+            print(f"    Final 3D frequencies (vertical bending modes):")
             for i, (f, ft, e) in enumerate(zip(final_freqs, target_frequencies, errors_cents)):
                 sign = '+' if e >= 0 else ''
                 print(f"      f{i+1}: {f:.1f} Hz (target: {ft:.1f} Hz, {sign}{e:.1f} cents)")
             print(f"    Tuning error: {tuning_error:.4f}%, max error: {max_error:.1f} cents")
 
-        # Get the cuts
-        cuts = genes_to_cuts(result_corrected.best_individual.genes)
+            # Show other mode types found
+            for mode_type, modes in classified_modes_final.items():
+                if mode_type != 'vertical_bending' and modes:
+                    mode_freqs = [m['frequency'] for m in modes[:3]]
+                    print(f"    Other modes ({mode_type}): {', '.join(f'{f:.1f}' for f in mode_freqs)} Hz")
 
         # ----------------------------------------------------------------
         # Generate diagrams
@@ -329,13 +447,14 @@ def process_single_bar(
         note_output_dir = os.path.join(output_dir, safe_note_name)
         os.makedirs(note_output_dir, exist_ok=True)
 
-        generate_bar_diagrams(
+        profile_path, mesh_path = generate_bar_visualizations(
             bar=bar,
             cuts=cuts,
             note_name=note_name,
             frequencies=final_freqs,
             target_frequencies=target_frequencies,
-            output_dir=note_output_dir
+            output_dir=note_output_dir,
+            material=material
         )
 
         # Write results file
@@ -350,13 +469,19 @@ def process_single_bar(
             f.write(f"  Length: {bar_length_mm:.1f} mm\n")
             f.write(f"  Width: {width_mm:.1f} mm\n")
             f.write(f"  Height: {height_mm:.1f} mm\n\n")
-            f.write(f"Frequencies:\n")
+            f.write(f"3D FEM Analysis:\n")
+            f.write(f"  Elements: {NUM_ELEMENTS_3D_X} x {NY} x {NZ}\n")
+            f.write(f"  Mode classification: Soares' corner displacement method\n\n")
+            f.write(f"Frequencies (vertical bending modes):\n")
             for i, (f_val, ft, e) in enumerate(zip(final_freqs, target_frequencies, errors_cents)):
                 sign = '+' if e >= 0 else ''
                 f.write(f"  f{i+1}: {f_val:.2f} Hz (target: {ft:.2f} Hz, {sign}{e:.1f} cents)\n")
             f.write(f"\nTuning Error: {tuning_error:.4f}%\n")
             f.write(f"Max Error: {max_error:.1f} cents\n\n")
-            f.write(f"Cut Geometry (symmetric about center):\n")
+            f.write(f"2D/3D Frequency Offset:\n")
+            for i, offset in enumerate(frequency_offset):
+                f.write(f"  f{i+1}: {offset:+.2f} Hz\n")
+            f.write(f"\nCut Geometry (symmetric about center):\n")
             for i, cut in enumerate(cuts):
                 depth_mm = (bar.h0 - cut.h) * 1000
                 width_cut = cut.lambda_ * 2 * 1000
@@ -390,6 +515,8 @@ def process_single_bar(
         elapsed = time.time() - start_time
         if verbose:
             print(f"    ERROR: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
         return BarResult(
             note_name=note_name,
@@ -426,9 +553,14 @@ def main():
     print(f"  Material: {material.name}")
     print(f"    Young's modulus: {material.E / 1e9:.1f} GPa")
     print(f"    Density: {material.rho:.0f} kg/m³")
+    print(f"    Poisson's ratio: {material.nu:.2f}")
     print(f"  Tuning ratio: {preset.name} ({preset.description})")
     print(f"  Number of cuts: {NUM_CUTS}")
     print(f"  Output directory: {OUTPUT_DIR}/")
+    print(f"\nFEM Settings:")
+    print(f"  2D optimization: {NUM_ELEMENTS_2D} elements")
+    print(f"  3D verification: {NUM_ELEMENTS_3D_X} x {NY} x {NZ} elements")
+    print(f"  Mode classification: Soares' corner displacement method")
 
     # Generate notes in range
     notes = generate_notes_in_range(START_NOTE, END_NOTE, scale_type='chromatic')
@@ -477,7 +609,7 @@ def main():
     print(f"Total time: {total_time:.1f}s ({total_time/len(results):.1f}s per bar)")
 
     if successful:
-        print(f"\nBar Summary:")
+        print(f"\nBar Summary (3D verified frequencies):")
         print(f"{'Note':<6} {'Length':>8} {'f1':>8} {'f2':>8} {'f3':>8} {'Error':>8} {'Max Cents':>10}")
         print("-" * 70)
 
@@ -504,6 +636,10 @@ def main():
         f.write(f"  Material: {material.name}\n")
         f.write(f"  Tuning ratio: {preset.name}\n")
         f.write(f"  Number of cuts: {NUM_CUTS}\n\n")
+        f.write(f"FEM Settings:\n")
+        f.write(f"  2D optimization: {NUM_ELEMENTS_2D} elements\n")
+        f.write(f"  3D verification: {NUM_ELEMENTS_3D_X} x {NY} x {NZ} elements\n")
+        f.write(f"  Mode classification: Soares' corner displacement method\n\n")
 
         f.write(f"Results:\n")
         f.write(f"  Total bars: {len(results)}\n")
@@ -517,10 +653,11 @@ def main():
             for r in successful:
                 f.write(f"\n{r.note_name} ({r.note_frequency:.2f} Hz):\n")
                 f.write(f"  Length: {r.bar_length:.1f} mm\n")
-                f.write(f"  Frequencies:\n")
+                f.write(f"  Frequencies (3D verified):\n")
                 for i, (freq, target, cents) in enumerate(zip(r.final_frequencies, r.target_frequencies, r.errors_cents)):
                     sign = '+' if cents >= 0 else ''
                     f.write(f"    f{i+1}: {freq:.1f} Hz (target: {target:.1f} Hz, {sign}{cents:.1f} cents)\n")
+                f.write(f"  2D/3D offset: {', '.join(f'{o:+.1f}' for o in r.frequency_offset)} Hz\n")
                 f.write(f"  Tuning error: {r.tuning_error:.4f}%\n")
                 f.write(f"  Cuts:\n")
                 for i, cut in enumerate(r.cuts):

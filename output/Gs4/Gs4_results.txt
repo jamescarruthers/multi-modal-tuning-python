@@ -10,16 +10,25 @@ Bar Dimensions:
   Width: 32.0 mm
   Height: 24.0 mm
 
-Frequencies:
-  f1: 345.37 Hz (target: 415.30 Hz, -319.2 cents)
-  f2: 1026.72 Hz (target: 1245.91 Hz, -335.0 cents)
-  f3: 2085.72 Hz (target: 2491.83 Hz, -308.0 cents)
+3D FEM Analysis:
+  Elements: 120 x 2 x 3
+  Mode classification: Soares' corner displacement method
 
-Tuning Error: 2.8585%
-Max Error: 335.0 cents
+Frequencies (vertical bending modes):
+  f1: 411.34 Hz (target: 415.30 Hz, -16.6 cents)
+  f2: 1266.09 Hz (target: 1245.91 Hz, +27.8 cents)
+  f3: 2476.73 Hz (target: 2491.83 Hz, -10.5 cents)
+
+Tuning Error: 0.0125%
+Max Error: 27.8 cents
+
+2D/3D Frequency Offset:
+  f1: +10.26 Hz
+  f2: +33.30 Hz
+  f3: +63.69 Hz
 
 Cut Geometry (symmetric about center):
-  Cut 1: lambda = 147.27 mm, h = 19.40 mm
-          (width = 294.5 mm, depth = 4.60 mm)
-  Cut 2: lambda = 87.90 mm, h = 17.86 mm
-          (width = 175.8 mm, depth = 6.14 mm)
+  Cut 1: lambda = 74.20 mm, h = 19.62 mm
+          (width = 148.4 mm, depth = 4.38 mm)
+  Cut 2: lambda = 9.27 mm, h = 18.06 mm
+          (width = 18.5 mm, depth = 5.94 mm)
