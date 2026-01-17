@@ -189,7 +189,9 @@ def blend_crossover(
 def perform_crossover(
     pairs: List[Tuple[Individual, Individual]],
     bounds: VariableBounds,
-    method: Literal['heuristic', 'single', 'two', 'uniform', 'blend'] = 'heuristic'
+    method: Literal['heuristic', 'single', 'two', 'uniform', 'blend'] = 'heuristic',
+    max_workers: int = 0,
+    use_parallel: bool = True
 ) -> List[Individual]:
     """
     Perform crossover on multiple parent pairs.
@@ -198,6 +200,8 @@ def perform_crossover(
         pairs: Array of parent pairs
         bounds: Variable bounds
         method: Crossover method to use
+        max_workers: Maximum workers for parallel execution (0 = auto)
+        use_parallel: Whether to use parallel execution
 
     Returns:
         Array of children
@@ -209,6 +213,10 @@ def perform_crossover(
         'uniform': uniform_crossover,
         'blend': blend_crossover
     }[method]
+
+    if use_parallel and len(pairs) >= 4:
+        from .parallel import parallel_crossover
+        return parallel_crossover(pairs, bounds, crossover_fn, max_workers)
 
     children: List[Individual] = []
 

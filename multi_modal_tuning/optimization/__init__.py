@@ -51,6 +51,8 @@ from .penalties import (
 from .objective import (
     compute_tuning_error,
     compute_max_tuning_error,
+    compute_torsional_error,
+    compute_combined_tuning_error,
     combined_objective_volume,
     combined_objective_roughness,
     evaluate_fitness,
@@ -63,6 +65,11 @@ from .algorithm import (
     run_adaptive_evolution,
     get_default_ea_parameters,
     EAConfig,
+)
+
+from .surrogate import (
+    run_surrogate_optimization,
+    SurrogateConfig,
 )
 
 __all__ = [
@@ -107,6 +114,8 @@ __all__ = [
     # Objective
     "compute_tuning_error",
     "compute_max_tuning_error",
+    "compute_torsional_error",
+    "compute_combined_tuning_error",
     "combined_objective_volume",
     "combined_objective_roughness",
     "evaluate_fitness",
@@ -117,4 +126,7 @@ __all__ = [
     "run_adaptive_evolution",
     "get_default_ea_parameters",
     "EAConfig",
+    # Surrogate
+    "run_surrogate_optimization",
+    "SurrogateConfig",
 ]

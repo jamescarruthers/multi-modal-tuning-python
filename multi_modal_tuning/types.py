@@ -5,7 +5,7 @@ Uses dataclasses for clean, typed structures that mirror the TypeScript interfac
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 from enum import Enum
 import math
 
@@ -44,16 +44,30 @@ class Cut:
 
 @dataclass
 class TuningPreset:
-    """Tuning preset with frequency ratios."""
+    """
+    Tuning preset with frequency ratios for bending and optionally torsional modes.
+
+    Based on Soares et al. (2021) "Tuning of bending and torsional modes of bars
+    used in mallet percussion instruments", JASA 150(4), pp.2757-2769.
+
+    Notation: (B1:B2:B3:B4 | T1:T2) where B = bending, T = torsional
+    e.g., "1:4:10:16|5:20" means bending modes at 1,4,10,16× and torsional at 5,20×
+    """
     name: str
-    ratios: List[float]
+    ratios: List[float]  # Bending mode ratios (required)
     description: str
     instrument: str
+    torsional_ratios: Optional[List[float]] = None  # Torsional mode ratios (optional)
+    flexible_torsional: bool = False  # If True, torsional modes can snap to nearest harmonic
 
 
 @dataclass
 class EAParameters:
-    """Evolutionary algorithm parameters."""
+    """
+    Evolutionary algorithm parameters.
+
+    Extended to support torsional mode tuning based on Soares et al. (2021).
+    """
     population_size: int = 50         # Npop
     elitism_percent: float = 10.0     # Pe (0-100)
     crossover_percent: float = 30.0   # Pc (0-100)
@@ -78,6 +92,16 @@ class EAParameters:
     # Frequency offset for 2D/3D calibration (e.g., 0.05 = target 5% higher)
     # Applied as: effective_target = target * (1 + offset)
     frequency_offset: float = 0.0
+    # Torsional mode tuning (Soares et al. 2021)
+    # Weight for torsional mode errors in combined objective (0 = ignore torsional)
+    torsional_weight: float = 0.0
+    # If True, allow torsional modes to snap to nearest target in set
+    flexible_torsional: bool = False
+    # Optimization algorithm: 'evolutionary' or 'surrogate'
+    optimizer: Literal['evolutionary', 'surrogate'] = 'evolutionary'
+    # Surrogate optimization parameters
+    surrogate_max_evals: int = 500    # Max function evaluations for surrogate
+    surrogate_initial_points: int = 20  # Initial random sampling points
 
 
 @dataclass
@@ -103,6 +127,12 @@ class OptimizationResult:
     generations: int
     length_trim: float = 0.0          # How much trimmed from each end (m)
     effective_length: float = 0.0     # L - 2*length_trim (m)
+    # Torsional mode results (Soares et al. 2021)
+    torsional_frequencies: Optional[List[float]] = None
+    target_torsional_frequencies: Optional[List[float]] = None
+    torsional_errors_cents: Optional[List[float]] = None
+    # Classified modes from 3D analysis
+    classified_modes: Optional[Dict[str, List[dict]]] = None
 
 
 @dataclass
@@ -143,3 +173,8 @@ class DetailedEvaluation:
     combined_fitness: float
     cents_errors: List[float]
     max_cents_error: float
+    # Torsional mode results (Soares et al. 2021)
+    torsional_frequencies: Optional[List[float]] = None
+    target_torsional_frequencies: Optional[List[float]] = None
+    torsional_cents_errors: Optional[List[float]] = None
+    torsional_error: float = 0.0  # Torsional tuning error component

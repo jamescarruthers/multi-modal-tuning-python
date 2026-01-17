@@ -310,6 +310,12 @@ def process_single_bar(
         element_heights = generate_element_heights(cuts_2d, bar.L, bar.h0, NUM_ELEMENTS_3D_X)
 
         # Run 3D FEM with mode classification
+        num_3d_elements = NUM_ELEMENTS_3D_X * NY * NZ
+        num_3d_nodes = (NUM_ELEMENTS_3D_X + 1) * (NY + 1) * (NZ + 1)
+        num_3d_dof = num_3d_nodes * 3
+        if verbose:
+            print(f"    3D mesh: {NUM_ELEMENTS_3D_X}x{NY}x{NZ} = {num_3d_elements} elements, {num_3d_dof} DOF")
+
         all_freqs_3d, classified_modes, _ = compute_frequencies_3d_classified(
             element_heights,
             bar.L,

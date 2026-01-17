@@ -6,29 +6,29 @@ Material: Sapele
 Tuning ratio: 1:3:6
 
 Bar Dimensions:
-  Length: 396.4 mm
+  Length: 404.7 mm
   Width: 32.0 mm
   Height: 24.0 mm
 
 3D FEM Analysis:
-  Elements: 120 x 2 x 3
+  Elements: 120 x 2 x 24
   Mode classification: Soares' corner displacement method
 
 Frequencies (vertical bending modes):
-  f1: 547.02 Hz (target: 554.37 Hz, -23.1 cents)
-  f2: 1691.51 Hz (target: 1663.10 Hz, +29.3 cents)
-  f3: 3356.71 Hz (target: 3326.19 Hz, +15.8 cents)
+  f1: 599.09 Hz (target: 554.37 Hz, +134.3 cents)
+  f2: 1654.51 Hz (target: 1663.10 Hz, -9.0 cents)
+  f3: 3218.20 Hz (target: 3326.19 Hz, -57.1 cents)
 
-Tuning Error: 0.0183%
-Max Error: 29.3 cents
+Tuning Error: 0.3099%
+Max Error: 134.3 cents
 
 2D/3D Frequency Offset:
-  f1: +15.18 Hz
-  f2: +47.11 Hz
-  f3: +72.74 Hz
+  f1: -3.13 Hz
+  f2: +17.62 Hz
+  f3: +48.29 Hz
 
 Cut Geometry (symmetric about center):
-  Cut 1: lambda = 50.64 mm, h = 11.82 mm
-          (width = 101.3 mm, depth = 12.18 mm)
-  Cut 2: lambda = 45.40 mm, h = 19.09 mm
-          (width = 90.8 mm, depth = 4.91 mm)
+  Cut 1: lambda = 78.63 mm, h = 21.13 mm
+          (width = 157.3 mm, depth = 2.87 mm)
+  Cut 2: lambda = 5.43 mm, h = 19.47 mm
+          (width = 10.9 mm, depth = 4.53 mm)

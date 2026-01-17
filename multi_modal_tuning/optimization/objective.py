@@ -3,9 +3,24 @@ Objective Function for Optimization
 
 Implements the tuning error objective function from the paper (Eq. 7)
 and combined objective functions with penalties (Eq. 11, 13).
+
+Extended with torsional mode tuning based on:
+Soares et al. (2021) "Tuning of bending and torsional modes of bars used in
+mallet percussion instruments", JASA 150(4), pp.2757-2769.
+
+Equation 4 from Soares:
+ε(λ,h) = 100/(R+M) × [Σ((f̃_B,m - f*_B,m)/f*_B,m)² + Σ((f̃_T,r - f*_T,r)/f*_T,r)²]
+
+where:
+- f̃_B,m = computed bending frequencies
+- f*_B,m = target bending frequencies
+- f̃_T,r = computed torsional frequencies
+- f*_T,r = target torsional frequencies
+- M = number of bending mode targets
+- R = number of torsional mode targets
 """
 
-from typing import List, Literal
+from typing import List, Literal, Optional
 import math
 
 from ..types import Individual, BarParameters, Material, DetailedEvaluation
@@ -96,6 +111,132 @@ def compute_max_tuning_error(
             max_squared_error = squared_error
 
     return 100.0 * max_squared_error
+
+
+def compute_torsional_error(
+    computed_torsional: List[float],
+    target_torsional: List[float],
+    flexible: bool = False,
+    allowed_targets: Optional[List[float]] = None
+) -> float:
+    """
+    Compute torsional mode tuning error (from Soares et al. 2021 Eq. 4).
+
+    Args:
+        computed_torsional: Computed torsional frequencies from 3D FEM
+        target_torsional: Target torsional frequencies
+        flexible: If True, use flexible torsional tuning (snap to nearest)
+        allowed_targets: For flexible mode, list of allowed target frequencies
+
+    Returns:
+        Average squared relative error for torsional modes as percentage
+    """
+    R = min(len(computed_torsional), len(target_torsional))
+    if R == 0:
+        return 0.0
+
+    sum_squared_error = 0.0
+    count = 0
+
+    for r in range(R):
+        computed = computed_torsional[r]
+        target = target_torsional[r]
+
+        # For flexible torsional tuning, snap to nearest allowed target
+        if flexible and allowed_targets:
+            target = min(allowed_targets, key=lambda t: abs(t - computed))
+
+        if target == 0:
+            continue
+
+        relative_error = (computed - target) / target
+        sum_squared_error += relative_error * relative_error
+        count += 1
+
+    return 100.0 * (sum_squared_error / count) if count > 0 else 0.0
+
+
+def compute_combined_tuning_error(
+    computed_bending: List[float],
+    target_bending: List[float],
+    computed_torsional: Optional[List[float]] = None,
+    target_torsional: Optional[List[float]] = None,
+    torsional_weight: float = 1.0,
+    f1_priority: float = 1.0,
+    flexible_torsional: bool = False,
+    allowed_torsional_targets: Optional[List[float]] = None
+) -> float:
+    """
+    Compute combined bending + torsional tuning error (Soares et al. 2021 Eq. 4).
+
+    ε = 100/(R+M) × [Σ w_m((f̃_B,m - f*_B,m)/f*_B,m)² + Σ((f̃_T,r - f*_T,r)/f*_T,r)²]
+
+    Args:
+        computed_bending: Computed bending mode frequencies
+        target_bending: Target bending mode frequencies
+        computed_torsional: Computed torsional frequencies (optional)
+        target_torsional: Target torsional frequencies (optional)
+        torsional_weight: Weight for torsional errors relative to bending (default 1.0)
+        f1_priority: Extra weight for fundamental bending mode
+        flexible_torsional: If True, torsional modes snap to nearest allowed target
+        allowed_torsional_targets: For flexible mode, list of allowed frequencies
+
+    Returns:
+        Combined tuning error as percentage
+    """
+    M = min(len(computed_bending), len(target_bending))
+    R = 0
+    if computed_torsional and target_torsional:
+        R = min(len(computed_torsional), len(target_torsional))
+
+    if M == 0:
+        return float('inf')
+
+    # Bending mode error (with f1 priority weighting)
+    bending_weighted_sum = 0.0
+    bending_total_weight = 0.0
+
+    for m in range(M):
+        computed = computed_bending[m]
+        target = target_bending[m]
+
+        if target == 0:
+            continue
+
+        weight = f1_priority if m == 0 else 1.0
+        relative_error = (computed - target) / target
+        bending_weighted_sum += weight * relative_error * relative_error
+        bending_total_weight += weight
+
+    # Torsional mode error
+    torsional_sum = 0.0
+    torsional_count = 0
+
+    if R > 0 and computed_torsional and target_torsional:
+        for r in range(R):
+            computed = computed_torsional[r]
+            target = target_torsional[r]
+
+            # For flexible torsional tuning, snap to nearest allowed target
+            if flexible_torsional and allowed_torsional_targets:
+                target = min(allowed_torsional_targets, key=lambda t: abs(t - computed))
+
+            if target == 0:
+                continue
+
+            relative_error = (computed - target) / target
+            torsional_sum += relative_error * relative_error
+            torsional_count += 1
+
+    # Combined error (Eq. 4 from Soares)
+    # Weight torsional modes according to torsional_weight parameter
+    total_modes = bending_total_weight + torsional_weight * torsional_count
+
+    if total_modes == 0:
+        return float('inf')
+
+    combined_sum = bending_weighted_sum + torsional_weight * torsional_sum
+    return 100.0 * (combined_sum / total_modes)
 
 
 def combined_objective_volume(

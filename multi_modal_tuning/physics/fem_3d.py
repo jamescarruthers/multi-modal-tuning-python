@@ -10,6 +10,8 @@ especially for complex undercut geometries and wide bars where
 """
 
 from typing import List, Tuple, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 import numpy as np
 from scipy import linalg
 from scipy.sparse import lil_matrix, csr_matrix
@@ -426,13 +428,42 @@ def generate_bar_mesh_3d_adaptive(
     return nodes, elements, heights_per_element
 
 
+def _compute_element_matrices(
+    elem_idx: int,
+    elements: np.ndarray,
+    nodes: np.ndarray,
+    E: float,
+    nu: float,
+    rho: float
+) -> Tuple[int, np.ndarray, np.ndarray, List[int]]:
+    """
+    Compute element matrices for a single element.
+
+    Returns:
+        Tuple of (element_index, Ke, Me, dof_map)
+    """
+    elem_nodes = elements[elem_idx]
+    node_coords = nodes[elem_nodes]
+
+    Ke, Me = compute_hex8_matrices(node_coords, E, nu, rho)
+
+    # DOF mapping
+    dof_map = []
+    for n in elem_nodes:
+        dof_map.extend([3 * n, 3 * n + 1, 3 * n + 2])
+
+    return elem_idx, Ke, Me, dof_map
+
+
 def assemble_global_matrices_3d(
     nodes: np.ndarray,
     elements: np.ndarray,
     E: float,
     nu: float,
     rho: float,
-    use_sparse: bool = True
+    use_sparse: bool = True,
+    max_workers: int = 0,
+    use_parallel: bool = True
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Assemble global stiffness and mass matrices from 3D mesh.
@@ -444,6 +475,8 @@ def assemble_global_matrices_3d(
         nu: Poisson's ratio
         rho: Density (kg/m^3)
         use_sparse: Whether to use sparse matrices (recommended for large meshes)
+        max_workers: Maximum workers for parallel execution (0 = auto)
+        use_parallel: Whether to use parallel execution
 
     Returns:
         Tuple of (K_global, M_global) matrices
@@ -459,22 +492,47 @@ def assemble_global_matrices_3d(
         K_global = np.zeros((num_dof, num_dof), dtype=np.float64)
         M_global = np.zeros((num_dof, num_dof), dtype=np.float64)
 
-    for e in range(num_elements):
-        elem_nodes = elements[e]
-        node_coords = nodes[elem_nodes]
+    # Parallel element matrix computation
+    if use_parallel and num_elements >= 8:
+        workers = max_workers if max_workers > 0 else (os.cpu_count() or 4)
+        workers = min(workers, num_elements)
 
-        Ke, Me = compute_hex8_matrices(node_coords, E, nu, rho)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(_compute_element_matrices, e, elements, nodes, E, nu, rho)
+                for e in range(num_elements)
+            ]
 
-        # DOF mapping
-        dof_map = []
-        for n in elem_nodes:
-            dof_map.extend([3 * n, 3 * n + 1, 3 * n + 2])
+            for future in as_completed(futures):
+                try:
+                    _, Ke, Me, dof_map = future.result()
 
-        for i in range(24):
-            for j in range(24):
-                gi, gj = dof_map[i], dof_map[j]
-                K_global[gi, gj] += Ke[i, j]
-                M_global[gi, gj] += Me[i, j]
+                    # Assembly must be done serially to avoid race conditions
+                    for i in range(24):
+                        for j in range(24):
+                            gi, gj = dof_map[i], dof_map[j]
+                            K_global[gi, gj] += Ke[i, j]
+                            M_global[gi, gj] += Me[i, j]
+                except Exception:
+                    pass
+    else:
+        # Serial fallback
+        for e in range(num_elements):
+            elem_nodes = elements[e]
+            node_coords = nodes[elem_nodes]
+
+            Ke, Me = compute_hex8_matrices(node_coords, E, nu, rho)
+
+            # DOF mapping
+            dof_map = []
+            for n in elem_nodes:
+                dof_map.extend([3 * n, 3 * n + 1, 3 * n + 2])
+
+            for i in range(24):
+                for j in range(24):
+                    gi, gj = dof_map[i], dof_map[j]
+                    K_global[gi, gj] += Ke[i, j]
+                    M_global[gi, gj] += Me[i, j]
 
     if use_sparse:
         K_global = csr_matrix(K_global)

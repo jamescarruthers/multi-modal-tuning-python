@@ -314,7 +314,9 @@ def perform_mutation(
     individuals: List[Individual],
     bounds: VariableBounds,
     method: str = 'uniform',
-    sigma: float = 0.1
+    sigma: float = 0.1,
+    max_workers: int = 0,
+    use_parallel: bool = True
 ) -> List[Individual]:
     """
     Perform mutation on a set of individuals.
@@ -324,11 +326,16 @@ def perform_mutation(
         bounds: Variable bounds
         method: Mutation method ('uniform' or 'gaussian')
         sigma: Mutation strength (for uniform) or phi (for gaussian)
+        max_workers: Maximum workers for parallel execution (0 = auto)
+        use_parallel: Whether to use parallel execution
 
     Returns:
         Mutated individuals
     """
-    if method == 'uniform':
-        return [uniform_mutation(ind, sigma, bounds) for ind in individuals]
-    else:
-        return [gaussian_self_adaptive_mutation(ind, sigma, bounds) for ind in individuals]
+    mutation_fn = uniform_mutation if method == 'uniform' else gaussian_self_adaptive_mutation
+
+    if use_parallel and len(individuals) >= 4:
+        from .parallel import parallel_mutation
+        return parallel_mutation(individuals, bounds, mutation_fn, sigma, max_workers)
+
+    return [mutation_fn(ind, sigma, bounds) for ind in individuals]

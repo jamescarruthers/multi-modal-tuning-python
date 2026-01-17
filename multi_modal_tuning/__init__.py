@@ -29,6 +29,8 @@ from .data.presets import (
     TUNING_PRESETS,
     get_preset,
     calculate_target_frequencies,
+    calculate_torsional_targets,
+    find_nearest_torsional_target,
     frequency_to_cents,
     UNIFORM_BAR_BETAS,
     UNIFORM_BAR_RATIOS,
@@ -39,6 +41,17 @@ from .optimization.algorithm import (
     run_adaptive_evolution,
     get_default_ea_parameters,
     EAConfig,
+)
+
+from .optimization.surrogate import (
+    run_surrogate_optimization,
+    SurrogateConfig,
+)
+
+from .optimization.objective import (
+    compute_tuning_error,
+    compute_torsional_error,
+    compute_combined_tuning_error,
 )
 
 from .utils.note_utils import (
@@ -90,6 +103,8 @@ __all__ = [
     "TUNING_PRESETS",
     "get_preset",
     "calculate_target_frequencies",
+    "calculate_torsional_targets",
+    "find_nearest_torsional_target",
     "frequency_to_cents",
     "UNIFORM_BAR_BETAS",
     "UNIFORM_BAR_RATIOS",
@@ -98,6 +113,13 @@ __all__ = [
     "run_adaptive_evolution",
     "get_default_ea_parameters",
     "EAConfig",
+    # Surrogate optimization
+    "run_surrogate_optimization",
+    "SurrogateConfig",
+    # Objective functions
+    "compute_tuning_error",
+    "compute_torsional_error",
+    "compute_combined_tuning_error",
     # Utils
     "note_to_frequency",
     "frequency_to_note",

@@ -2,6 +2,12 @@
 Tuning presets for common percussion instruments.
 
 Contains standard tuning ratios for marimbas, vibraphones, xylophones, etc.
+
+Extended with torsional mode tuning based on:
+Soares et al. (2021) "Tuning of bending and torsional modes of bars used in
+mallet percussion instruments", JASA 150(4), pp.2757-2769.
+
+Notation: "B1:B2:B3:B4|T1:T2" where B=bending, T=torsional ratios
 """
 
 from typing import List, Optional
@@ -10,6 +16,7 @@ from ..types import TuningPreset
 
 
 TUNING_PRESETS: List[TuningPreset] = [
+    # === Traditional bending-only presets (backward compatible) ===
     TuningPreset(
         name="1:2.76:5.40",
         ratios=[1, 2.756, 5.404],
@@ -70,6 +77,90 @@ TUNING_PRESETS: List[TuningPreset] = [
         description="Odd harmonic series",
         instrument="Custom"
     ),
+
+    # === 4-mode bending presets (from Soares paper) ===
+    TuningPreset(
+        name="1:4:10:16",
+        ratios=[1, 4, 10, 16],
+        description="Extended vibraphone tuning (4 bending modes)",
+        instrument="Vibraphone"
+    ),
+    TuningPreset(
+        name="1:3:6:10",
+        ratios=[1, 3, 6, 10],
+        description="Extended xylophone tuning (4 bending modes)",
+        instrument="Xylophone"
+    ),
+
+    # === Combined bending + torsional presets (Soares et al. 2021) ===
+    # Notation: ratios = bending modes, torsional_ratios = torsional modes
+    TuningPreset(
+        name="1:4:10|4",
+        ratios=[1, 4, 10],
+        torsional_ratios=[4],
+        description="Marimba with T1 tuned to unison with B2 (Soares)",
+        instrument="Marimba"
+    ),
+    TuningPreset(
+        name="1:4:10|5",
+        ratios=[1, 4, 10],
+        torsional_ratios=[5],
+        description="Marimba with T1 at 5× (natural position)",
+        instrument="Marimba"
+    ),
+    TuningPreset(
+        name="1:4:10|6",
+        ratios=[1, 4, 10],
+        torsional_ratios=[6],
+        description="Marimba with T1 at 6× (between B2 and B3)",
+        instrument="Marimba"
+    ),
+    TuningPreset(
+        name="1:4:10:16|4:16",
+        ratios=[1, 4, 10, 16],
+        torsional_ratios=[4, 16],
+        description="4 bending + 2 torsional (T1=B2, T2=B4 unison)",
+        instrument="Vibraphone"
+    ),
+    TuningPreset(
+        name="1:4:10:16|5:15",
+        ratios=[1, 4, 10, 16],
+        torsional_ratios=[5, 15],
+        description="4 bending + 2 torsional (separate frequencies)",
+        instrument="Vibraphone"
+    ),
+    TuningPreset(
+        name="1:4:10:16|5:20",
+        ratios=[1, 4, 10, 16],
+        torsional_ratios=[5, 20],
+        description="4 bending + 2 torsional (from Soares paper)",
+        instrument="Vibraphone"
+    ),
+    TuningPreset(
+        name="1:4:10:16|6:18",
+        ratios=[1, 4, 10, 16],
+        torsional_ratios=[6, 18],
+        description="4 bending + 2 torsional (from Soares paper)",
+        instrument="Vibraphone"
+    ),
+
+    # === Flexible torsional presets (modes snap to nearest harmonic) ===
+    TuningPreset(
+        name="1:4:10|flex",
+        ratios=[1, 4, 10],
+        torsional_ratios=[4, 5, 6, 7, 8],  # Allowed positions
+        flexible_torsional=True,
+        description="Marimba with flexible T1 (snaps to nearest harmonic)",
+        instrument="Marimba"
+    ),
+    TuningPreset(
+        name="1:4:10:16|flex",
+        ratios=[1, 4, 10, 16],
+        torsional_ratios=[4, 5, 6, 7, 8, 15, 16, 17, 18, 19, 20],  # Allowed positions
+        flexible_torsional=True,
+        description="4 bending + flexible torsional (Soares approach)",
+        instrument="Vibraphone"
+    ),
 ]
 
 
@@ -84,6 +175,47 @@ def get_preset(name: str) -> Optional[TuningPreset]:
 def calculate_target_frequencies(ratios: List[float], fundamental_hz: float) -> List[float]:
     """Calculate target frequencies from preset and fundamental."""
     return [r * fundamental_hz for r in ratios]
+
+
+def calculate_torsional_targets(
+    torsional_ratios: Optional[List[float]],
+    fundamental_hz: float
+) -> Optional[List[float]]:
+    """
+    Calculate torsional target frequencies from ratios and fundamental.
+
+    Args:
+        torsional_ratios: Torsional mode ratios (e.g., [5, 20] for T1=5×f1, T2=20×f1)
+        fundamental_hz: Fundamental bending frequency in Hz
+
+    Returns:
+        List of torsional target frequencies, or None if no torsional ratios
+    """
+    if torsional_ratios is None:
+        return None
+    return [r * fundamental_hz for r in torsional_ratios]
+
+
+def find_nearest_torsional_target(
+    computed_freq: float,
+    allowed_targets: List[float]
+) -> float:
+    """
+    Find nearest allowed torsional target for flexible torsional tuning.
+
+    Based on Soares et al. (2021) Eq. 4 alternative formulation where
+    torsional modes can snap to nearest frequency in allowed set.
+
+    Args:
+        computed_freq: Computed torsional frequency
+        allowed_targets: List of allowed target frequencies
+
+    Returns:
+        Nearest target frequency from allowed set
+    """
+    if not allowed_targets:
+        return computed_freq
+    return min(allowed_targets, key=lambda t: abs(t - computed_freq))
 
 
 def frequency_to_cents(computed: float, target: float) -> float:
