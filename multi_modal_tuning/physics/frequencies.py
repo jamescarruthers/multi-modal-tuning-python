@@ -6,9 +6,9 @@ using the FEM model. Supports both 2D Timoshenko beam and 3D solid
 element analysis.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Literal
 import math
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import os
 
 from ..types import BarParameters, Material, AnalysisMode
@@ -226,10 +226,11 @@ def batch_compute_fitness(
     max_workers: int = 0,
     analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
     ny: int = 2,
-    nz: int = 2
+    nz: int = 2,
+    parallel_mode: Literal['threading', 'multiprocessing', 'auto'] = 'auto'
 ) -> List[float]:
     """
-    Batch compute fitness for entire population using multithreading.
+    Batch compute fitness for entire population using parallel execution.
 
     Args:
         genes_array: List of gene arrays, one per individual
@@ -239,10 +240,12 @@ def batch_compute_fitness(
         num_elements: Number of FEM elements
         f1_priority: Weight multiplier for f1 (>1 prioritizes f1)
         num_cuts: Number of cuts per individual
-        max_workers: Maximum number of worker threads (0 = auto)
+        max_workers: Maximum number of workers (0 = auto)
         analysis_mode: BEAM_2D (fast) or SOLID_3D (accurate)
         ny: Number of elements in width direction (3D only)
         nz: Number of elements in thickness direction (3D only)
+        parallel_mode: 'threading' (lower overhead, good for NumPy),
+                      'multiprocessing' (bypasses GIL), or 'auto'
 
     Returns:
         List of fitness values for each individual
@@ -250,10 +253,19 @@ def batch_compute_fitness(
     if max_workers <= 0:
         max_workers = min(os.cpu_count() or 4, len(genes_array))
 
-    # Use multithreading for parallel fitness evaluation
+    # Auto mode: use threading (NumPy releases GIL, lower overhead)
+    if parallel_mode == 'auto':
+        parallel_mode = 'threading'
+
+    # Select executor based on mode
+    if parallel_mode == 'multiprocessing':
+        Executor = ProcessPoolExecutor
+    else:
+        Executor = ThreadPoolExecutor
+
     fitness_values = [float('inf')] * len(genes_array)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with Executor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_idx = {
             executor.submit(

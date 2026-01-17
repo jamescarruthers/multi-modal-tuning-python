@@ -33,14 +33,14 @@ def main():
     print("=" * 70)
 
     # Configuration
-    note = "C5"
+    note = "F4"
     fundamental = note_to_frequency(note)
 
     material = MATERIALS["rosewood"]
     bar = BarParameters(
-        L=0.18,           # 180mm length
+        L=0.45,           # 180mm length
         b=0.032,          # 32mm width
-        h0=0.020,         # 20mm thickness
+        h0=0.024,         # 20mm thickness
         hMin=0.002        # 2mm minimum
     )
 
@@ -71,9 +71,9 @@ def main():
         target_frequencies=target_frequencies,
         num_cuts=num_cuts,
         bounds=bounds,
-        max_evaluations=80,         # Limited evals for expensive 3D
+        max_evaluations=400,         # Limited evals for expensive 3D
         initial_points=15,          # Initial sampling
-        num_elements=50,            # 3D mesh: 50 elements in x
+        num_elements=80,            # 3D mesh: 50 elements in x
         ny=2,                       # 2 elements in y (width)
         nz=4,                       # 4 elements in z (thickness)
         target_error=0.1,           # Stop at 0.1% error

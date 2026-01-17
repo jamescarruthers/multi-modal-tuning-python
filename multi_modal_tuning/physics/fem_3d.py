@@ -9,8 +9,8 @@ especially for complex undercut geometries and wide bars where
 3D effects become significant.
 """
 
-from typing import List, Tuple, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Tuple, Optional, Literal
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import os
 import numpy as np
 from scipy import linalg
@@ -463,7 +463,8 @@ def assemble_global_matrices_3d(
     rho: float,
     use_sparse: bool = True,
     max_workers: int = 0,
-    use_parallel: bool = True
+    use_parallel: bool = True,
+    parallel_mode: Literal['threading', 'multiprocessing', 'auto'] = 'auto'
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Assemble global stiffness and mass matrices from 3D mesh.
@@ -477,6 +478,8 @@ def assemble_global_matrices_3d(
         use_sparse: Whether to use sparse matrices (recommended for large meshes)
         max_workers: Maximum workers for parallel execution (0 = auto)
         use_parallel: Whether to use parallel execution
+        parallel_mode: 'threading' (lower overhead, good for NumPy),
+                      'multiprocessing' (bypasses GIL), or 'auto'
 
     Returns:
         Tuple of (K_global, M_global) matrices
@@ -497,7 +500,17 @@ def assemble_global_matrices_3d(
         workers = max_workers if max_workers > 0 else (os.cpu_count() or 4)
         workers = min(workers, num_elements)
 
-        with ThreadPoolExecutor(max_workers=workers) as executor:
+        # Auto mode: use threading (NumPy releases GIL, lower overhead)
+        if parallel_mode == 'auto':
+            parallel_mode = 'threading'
+
+        # Select executor based on mode
+        if parallel_mode == 'multiprocessing':
+            Executor = ProcessPoolExecutor
+        else:
+            Executor = ThreadPoolExecutor
+
+        with Executor(max_workers=workers) as executor:
             futures = [
                 executor.submit(_compute_element_matrices, e, elements, nodes, E, nu, rho)
                 for e in range(num_elements)

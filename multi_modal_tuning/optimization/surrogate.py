@@ -18,9 +18,9 @@ expensive objective functions (like 3D FEM) because it:
 3. Balances exploitation (minimizing surrogate) and exploration (distance)
 """
 
-from typing import List, Optional, Callable, Tuple
+from typing import List, Optional, Callable, Tuple, Literal
 from dataclasses import dataclass
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import os
 import numpy as np
 
@@ -61,6 +61,7 @@ class SurrogateConfig:
     nz: int = 2
     max_workers: int = 0  # 0 = auto-detect
     use_parallel: bool = True
+    parallel_mode: Literal['threading', 'multiprocessing', 'auto'] = 'auto'
     on_progress: Optional[Callable[[ProgressUpdate], None]] = None
     should_stop: Optional[Callable[[], bool]] = None
 
@@ -220,7 +221,18 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
             fitness = _objective_function(genes, config)
             return sample, fitness
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Auto mode: use threading (NumPy releases GIL, lower overhead)
+        parallel_mode = config.parallel_mode
+        if parallel_mode == 'auto':
+            parallel_mode = 'threading'
+
+        # Select executor based on mode
+        if parallel_mode == 'multiprocessing':
+            Executor = ProcessPoolExecutor
+        else:
+            Executor = ThreadPoolExecutor
+
+        with Executor(max_workers=max_workers) as executor:
             futures = [executor.submit(evaluate_sample, sample) for sample in initial_samples]
 
             for future in as_completed(futures):
@@ -329,7 +341,18 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
                     max_workers = config.max_workers if config.max_workers > 0 else (os.cpu_count() or 4)
                     max_workers = min(max_workers, num_starts)
 
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # Auto mode: use threading (SciPy L-BFGS-B releases GIL)
+                    parallel_mode = config.parallel_mode
+                    if parallel_mode == 'auto':
+                        parallel_mode = 'threading'
+
+                    # Select executor based on mode
+                    if parallel_mode == 'multiprocessing':
+                        Executor = ProcessPoolExecutor
+                    else:
+                        Executor = ThreadPoolExecutor
+
+                    with Executor(max_workers=max_workers) as executor:
                         futures = [executor.submit(run_local_optimization, x0) for x0 in start_points]
 
                         for future in as_completed(futures):
