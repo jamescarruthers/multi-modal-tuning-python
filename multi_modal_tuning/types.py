@@ -59,6 +59,10 @@ class TuningPreset:
     instrument: str
     torsional_ratios: Optional[List[float]] = None  # Torsional mode ratios (optional)
     flexible_torsional: bool = False  # If True, torsional modes can snap to nearest harmonic
+    # Target modes specify which mode each ratio corresponds to for 3D analysis
+    # e.g., ['V1', 'V2', 'V3'] for 3 bending modes, or ['V1', 'T1', 'V2'] for mixed
+    # If None, defaults to V1, V2, V3, ... (all vertical bending)
+    target_modes: Optional[List[str]] = None
 
 
 @dataclass
@@ -102,6 +106,10 @@ class EAParameters:
     # Surrogate optimization parameters
     surrogate_max_evals: int = 500    # Max function evaluations for surrogate
     surrogate_initial_points: int = 20  # Initial random sampling points
+    # Target modes for 3D analysis (e.g., ['V1', 'V2', 'V3'] or ['V1', 'T1', 'V2'])
+    # V=vertical_bending, T=torsional, L=lateral, A=axial
+    # If None, uses first N modes sorted by frequency (unclassified)
+    target_modes: Optional[List[str]] = None
 
 
 @dataclass
@@ -133,6 +141,8 @@ class OptimizationResult:
     torsional_errors_cents: Optional[List[float]] = None
     # Classified modes from 3D analysis
     classified_modes: Optional[Dict[str, List[dict]]] = None
+    # Mode shapes for 3D visualization (computed during final evaluation)
+    mode_shapes_result: Optional['ModeShapesResult'] = None
 
 
 @dataclass
@@ -163,6 +173,34 @@ class VariableBounds:
 
 
 @dataclass
+class ModeShapeData:
+    """Single mode shape data for visualization."""
+    mode_index: int
+    frequency: float
+    mode_type: str  # 'vertical_bending', 'torsional', 'lateral', 'axial', 'unknown'
+    mode_number: int  # 1, 2, 3... within the mode type
+    displacements: List[float]  # Flat array [dx1,dy1,dz1, dx2,dy2,dz2, ...]
+    strain_energy: List[float]  # Per-element normalized strain energy (0-1)
+    max_displacement: float  # For scaling animation
+
+
+@dataclass
+class ModeShapesResult:
+    """Complete mode shapes data for visualization."""
+    frequencies: List[float]  # All frequencies
+    classified_modes: Dict[str, List[dict]]  # Modes organized by type
+    mode_shapes: List[ModeShapeData]  # Full mode shape data for each mode
+    num_nodes: int
+    num_elements: int
+    mesh_vertices: List[float]  # Flat array [x1,y1,z1, x2,y2,z2, ...]
+    mesh_indices: List[int]  # Triangle indices for visualization
+    mesh_heights: List[float]  # Per-element heights
+    bar_length: float
+    bar_width: float
+    bar_height: float
+
+
+@dataclass
 class DetailedEvaluation:
     """Detailed evaluation results for an individual."""
     computed_frequencies: List[float]
@@ -178,3 +216,5 @@ class DetailedEvaluation:
     target_torsional_frequencies: Optional[List[float]] = None
     torsional_cents_errors: Optional[List[float]] = None
     torsional_error: float = 0.0  # Torsional tuning error component
+    # Mode shapes for 3D visualization (only populated when requested)
+    mode_shapes_result: Optional[ModeShapesResult] = None

@@ -59,6 +59,7 @@ class SurrogateConfig:
     analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D
     ny: int = 2
     nz: int = 2
+    target_modes: Optional[List[str]] = None  # Target modes for 3D analysis
     max_workers: int = 0  # 0 = auto-detect
     use_parallel: bool = True
     parallel_mode: Literal['threading', 'multiprocessing', 'auto'] = 'auto'
@@ -85,7 +86,8 @@ def _objective_function(
             config.num_cuts,
             config.analysis_mode,
             config.ny,
-            config.nz
+            config.nz,
+            config.target_modes
         )
 
         tuning_error = compute_tuning_error(
@@ -176,7 +178,8 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
                         genes, config.bar, config.material,
                         len(config.target_frequencies),
                         config.num_elements, config.num_cuts,
-                        config.analysis_mode, config.ny, config.nz
+                        config.analysis_mode, config.ny, config.nz,
+                        config.target_modes
                     )
                     errors_cents = []
                     for i, comp in enumerate(computed_freq):
@@ -258,7 +261,8 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
                                     best_genes, config.bar, config.material,
                                     len(config.target_frequencies),
                                     config.num_elements, config.num_cuts,
-                                    config.analysis_mode, config.ny, config.nz
+                                    config.analysis_mode, config.ny, config.nz,
+                                    config.target_modes
                                 )
                                 errors_cents = []
                                 for i, comp in enumerate(computed_freq):
@@ -424,6 +428,8 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
 
     cut_genes = best_genes[:num_cuts * 2]
 
+    # For 3D analysis, also compute mode shapes for visualization
+    is_3d = config.analysis_mode == AnalysisMode.SOLID_3D
     detailed = evaluate_detailed(
         cut_genes,
         effective_bar,
@@ -432,7 +438,13 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
         config.penalty_type,
         config.penalty_weight,
         config.num_elements,
-        num_cuts
+        num_cuts,
+        config.analysis_mode,
+        config.ny,
+        config.nz,
+        config.target_modes,
+        compute_mode_shapes=is_3d,
+        num_modes_for_shapes=12,
     )
 
     return OptimizationResult(
@@ -447,5 +459,6 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
         roughness_percent=detailed.roughness_penalty,
         generations=evaluations,
         length_trim=length_adjust,
-        effective_length=effective_length
+        effective_length=effective_length,
+        mode_shapes_result=detailed.mode_shapes_result,
     )

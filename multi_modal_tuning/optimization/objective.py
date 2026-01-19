@@ -390,23 +390,141 @@ def evaluate_detailed(
     penalty_type: Literal['volume', 'roughness', 'none'],
     alpha: float,
     num_elements: int = 150,
-    num_cuts: int = 1
+    num_cuts: int = 1,
+    analysis_mode=None,
+    ny: int = 2,
+    nz: int = 2,
+    target_modes: Optional[List[str]] = None,
+    compute_mode_shapes: bool = False,
+    num_modes_for_shapes: int = 12,
 ) -> DetailedEvaluation:
     """
     Get detailed evaluation results for an individual.
     Used for displaying results to user.
+
+    Args:
+        genes: Cut genes
+        bar: Bar parameters
+        material: Material properties
+        target_freq: Target frequencies
+        penalty_type: Penalty type
+        alpha: Penalty weight
+        num_elements: Number of FEM elements
+        num_cuts: Number of cuts
+        analysis_mode: AnalysisMode enum or '2d'/'3d' string (default: BEAM_2D)
+        ny: Number of y elements (3D only)
+        nz: Number of z elements (3D only)
+        target_modes: Target modes for 3D (e.g., ['V1', 'V2', 'V3'])
+        compute_mode_shapes: If True and using 3D analysis, compute full mode shape data
+        num_modes_for_shapes: Number of modes to compute for visualization (default 12)
     """
+    from ..types import AnalysisMode, ModeShapeData, ModeShapesResult
+
     cuts = genes_to_cuts(genes)
 
-    # Compute frequencies
-    computed_frequencies = compute_frequencies_from_genes(
-        genes,
-        bar,
-        material,
-        len(target_freq),
-        num_elements,
-        num_cuts
-    )
+    # Determine analysis mode - handle both enum and string values
+    mode = AnalysisMode.BEAM_2D
+    if analysis_mode is not None:
+        if isinstance(analysis_mode, AnalysisMode):
+            mode = analysis_mode
+        elif analysis_mode == '3d' or analysis_mode == AnalysisMode.SOLID_3D.value:
+            mode = AnalysisMode.SOLID_3D
+
+    # For 3D with mode shapes requested, use the full mode shapes function
+    mode_shapes_result = None
+    if mode == AnalysisMode.SOLID_3D and compute_mode_shapes:
+        from ..physics.fem_3d import compute_frequencies_3d_with_mode_shapes
+
+        # Generate element heights using same algorithm as compute_frequencies_from_genes
+        cuts_sorted = sorted(cuts, key=lambda c: c.lambda_, reverse=True)
+        le = bar.L / num_elements
+        center_x = bar.L / 2
+
+        element_heights = []
+        for e in range(num_elements):
+            x_mid = (e + 0.5) * le
+            dist_from_center = abs(x_mid - center_x)
+
+            innermost_h = bar.h0
+            for cut in cuts_sorted:
+                if cut.lambda_ > 0 and dist_from_center <= cut.lambda_:
+                    innermost_h = cut.h
+
+            element_heights.append(innermost_h)
+
+        # Compute mode shapes with all the visualization data
+        result = compute_frequencies_3d_with_mode_shapes(
+            element_heights=element_heights,
+            length=bar.L,
+            width=bar.b,
+            E=material.E,
+            rho=material.rho,
+            nu=material.nu,
+            num_modes=num_modes_for_shapes,
+            ny=ny,
+            nz=nz,
+        )
+
+        # Extract target mode frequencies from classification
+        computed_frequencies = []
+        if target_modes:
+            mode_type_map = {'V': 'vertical_bending', 'T': 'torsional', 'L': 'lateral', 'A': 'axial'}
+            for mode_str in target_modes:
+                if len(mode_str) >= 2:
+                    type_char = mode_str[0].upper()
+                    mode_num = int(mode_str[1:])
+                    mode_type = mode_type_map.get(type_char)
+                    if mode_type:
+                        family_modes = result['classified_modes'].get(mode_type, [])
+                        matching = [m for m in family_modes if m['mode_number'] == mode_num]
+                        if matching:
+                            computed_frequencies.append(matching[0]['frequency'])
+                        else:
+                            computed_frequencies.append(float('inf'))
+        else:
+            # Use first N frequencies
+            computed_frequencies = result['frequencies'][:len(target_freq)]
+
+        # Convert to ModeShapesResult
+        mode_shape_data_list = []
+        for ms in result['mode_shapes']:
+            mode_shape_data_list.append(ModeShapeData(
+                mode_index=ms['mode_index'],
+                frequency=ms['frequency'],
+                mode_type=ms['mode_type'],
+                mode_number=ms['mode_number'],
+                displacements=ms['displacements'],
+                strain_energy=ms['strain_energy'],
+                max_displacement=ms['max_displacement'],
+            ))
+
+        mode_shapes_result = ModeShapesResult(
+            frequencies=result['frequencies'],
+            classified_modes=result['classified_modes'],
+            mode_shapes=mode_shape_data_list,
+            num_nodes=result['num_nodes'],
+            num_elements=result['num_elements'],
+            mesh_vertices=result['mesh']['vertices'],
+            mesh_indices=result['mesh']['indices'],
+            mesh_heights=result['mesh']['heights'],
+            bar_length=result['mesh']['bar_length'],
+            bar_width=result['mesh']['bar_width'],
+            bar_height=result['mesh']['bar_height'],
+        )
+    else:
+        # Standard frequency computation (no mode shapes)
+        computed_frequencies = compute_frequencies_from_genes(
+            genes,
+            bar,
+            material,
+            len(target_freq),
+            num_elements,
+            num_cuts,
+            mode,
+            ny,
+            nz,
+            target_modes,
+        )
 
     # Compute tuning error
     tuning_error = compute_tuning_error(computed_frequencies, target_freq)
@@ -441,5 +559,6 @@ def evaluate_detailed(
         roughness_penalty=roughness_penalty,
         combined_fitness=combined_fitness,
         cents_errors=cents_errors,
-        max_cents_error=max_cents_error
+        max_cents_error=max_cents_error,
+        mode_shapes_result=mode_shapes_result,
     )

@@ -65,7 +65,8 @@ def _compute_frequencies_and_errors(
     num_cuts: int,
     analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
     ny: int = 2,
-    nz: int = 2
+    nz: int = 2,
+    target_modes: Optional[List[str]] = None,
 ) -> dict:
     """Compute frequencies and cents errors for an individual."""
     try:
@@ -79,7 +80,8 @@ def _compute_frequencies_and_errors(
             num_cuts,
             analysis_mode,
             ny,
-            nz
+            nz,
+            target_modes,
         )
 
         errors_in_cents = []
@@ -116,10 +118,15 @@ def _batch_evaluate_population(
     max_workers: int = 0,
     analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
     ny: int = 2,
-    nz: int = 2
+    nz: int = 2,
+    target_modes: Optional[List[str]] = None,
 ) -> List[Individual]:
     """
     Batch evaluate population fitness using multithreading.
+
+    Args:
+        target_modes: For 3D analysis, specifies which modes to tune (e.g., ['V1', 'V2', 'V3']).
+                     If None, uses first N modes by frequency (unclassified).
     """
     genes_array = [ind.genes for ind in population]
     tuning_errors = batch_compute_fitness(
@@ -133,7 +140,8 @@ def _batch_evaluate_population(
         max_workers,
         analysis_mode,
         ny,
-        nz
+        nz,
+        target_modes=target_modes,
     )
 
     # Apply penalties if needed
@@ -208,6 +216,7 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     analysis_mode = ea_params.analysis_mode
     ny = ea_params.num_elements_y
     nz = ea_params.num_elements_z
+    target_modes = ea_params.target_modes
 
     # Report Generation 0: uncut bar baseline
     if on_progress:
@@ -215,11 +224,11 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
         [evaluated_uncut] = _batch_evaluate_population(
             [uncut_bar], bar, material, target_frequencies,
             penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-            analysis_mode, ny, nz
+            analysis_mode, ny, nz, target_modes
         )
         freq_data = _compute_frequencies_and_errors(
             evaluated_uncut.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
-            analysis_mode, ny, nz
+            analysis_mode, ny, nz, target_modes
         )
         on_progress(ProgressUpdate(
             generation=0,
@@ -238,7 +247,7 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     population = _batch_evaluate_population(
         population, bar, material, target_frequencies,
         penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-        analysis_mode, ny, nz
+        analysis_mode, ny, nz, target_modes
     )
 
     # Calculate percentages for different operations
@@ -289,7 +298,7 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
             if has_length_adjust:
                 parent_freqs = compute_frequencies_from_genes(
                     parent.genes, bar, material, 1, ea_params.num_elements, num_cuts,
-                    analysis_mode, ny, nz
+                    analysis_mode, ny, nz, target_modes
                 )
                 f1_error = parent_freqs[0] - target_frequencies[0] if parent_freqs else 0
                 freq_error = FrequencyError(f1_error=f1_error)
@@ -303,7 +312,7 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
             evaluated_offspring = _batch_evaluate_population(
                 new_offspring, bar, material, target_frequencies,
                 penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-                analysis_mode, ny, nz
+                analysis_mode, ny, nz, target_modes
             )
             next_generation.extend(evaluated_offspring)
 
@@ -322,7 +331,7 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
             stats = calculate_population_stats(population)
             freq_data = _compute_frequencies_and_errors(
                 best_ever.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
-                analysis_mode, ny, nz
+                analysis_mode, ny, nz, target_modes
             )
             on_progress(ProgressUpdate(
                 generation=generation,
@@ -350,6 +359,9 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     cut_genes = best_ever.genes[:num_cuts * 2]
 
     # Evaluate against ORIGINAL targets (not offset-adjusted) for accurate reporting
+    # Use same analysis mode and target_modes as optimization for consistency
+    # For 3D analysis, also compute mode shapes for visualization
+    is_3d = analysis_mode == AnalysisMode.SOLID_3D
     detailed = evaluate_detailed(
         cut_genes,
         effective_bar,
@@ -358,7 +370,13 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
         penalty_type,
         penalty_weight,
         ea_params.num_elements,
-        num_cuts
+        num_cuts,
+        analysis_mode,
+        ny,
+        nz,
+        target_modes,
+        compute_mode_shapes=is_3d,
+        num_modes_for_shapes=12,
     )
 
     return OptimizationResult(
@@ -373,7 +391,8 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
         roughness_percent=detailed.roughness_penalty,
         generations=generation,
         length_trim=length_adjust,
-        effective_length=effective_length
+        effective_length=effective_length,
+        mode_shapes_result=detailed.mode_shapes_result,
     )
 
 
@@ -413,6 +432,7 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
     analysis_mode = ea_params.analysis_mode
     ny = ea_params.num_elements_y
     nz = ea_params.num_elements_z
+    target_modes = ea_params.target_modes
 
     # Report Generation 0: uncut bar baseline
     if on_progress:
@@ -420,11 +440,11 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
         [evaluated_uncut] = _batch_evaluate_population(
             [uncut_bar], bar, material, target_frequencies,
             penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-            analysis_mode, ny, nz
+            analysis_mode, ny, nz, target_modes
         )
         freq_data = _compute_frequencies_and_errors(
             evaluated_uncut.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
-            analysis_mode, ny, nz
+            analysis_mode, ny, nz, target_modes
         )
         on_progress(ProgressUpdate(
             generation=0,
@@ -445,7 +465,7 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
     population = _batch_evaluate_population(
         population, bar, material, target_frequencies,
         penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-        analysis_mode, ny, nz
+        analysis_mode, ny, nz, target_modes
     )
 
     num_elite = max(1, int(ea_params.population_size * ea_params.elitism_percent / 100))
@@ -481,7 +501,7 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
             evaluated_offspring = _batch_evaluate_population(
                 new_offspring, bar, material, target_frequencies,
                 penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-                analysis_mode, ny, nz
+                analysis_mode, ny, nz, target_modes
             )
             next_generation.extend(evaluated_offspring)
 
@@ -497,7 +517,7 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
             stats = calculate_population_stats(population)
             freq_data = _compute_frequencies_and_errors(
                 best_ever.genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
-                analysis_mode, ny, nz
+                analysis_mode, ny, nz, target_modes
             )
             on_progress(ProgressUpdate(
                 generation=generation,
@@ -523,6 +543,9 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
     cut_genes = best_ever.genes[:num_cuts * 2]
 
     # Evaluate against ORIGINAL targets (not offset-adjusted) for accurate reporting
+    # Use same analysis mode and target_modes as optimization for consistency
+    # For 3D analysis, also compute mode shapes for visualization
+    is_3d = analysis_mode == AnalysisMode.SOLID_3D
     detailed = evaluate_detailed(
         cut_genes,
         effective_bar,
@@ -531,7 +554,13 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
         penalty_type,
         penalty_weight,
         ea_params.num_elements,
-        num_cuts
+        num_cuts,
+        analysis_mode,
+        ny,
+        nz,
+        target_modes,
+        compute_mode_shapes=is_3d,
+        num_modes_for_shapes=12,
     )
 
     return OptimizationResult(
@@ -546,7 +575,8 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
         roughness_percent=detailed.roughness_penalty,
         generations=generation,
         length_trim=length_adjust,
-        effective_length=effective_length
+        effective_length=effective_length,
+        mode_shapes_result=detailed.mode_shapes_result,
     )
 
 

@@ -14,7 +14,11 @@ import os
 from ..types import BarParameters, Material, AnalysisMode
 from .bar_profile import genes_to_cuts
 from .fem_assembly import assemble_global_matrices, solve_generalized_eigenvalue
-from .fem_3d import compute_frequencies_3d
+from .fem_3d import (
+    compute_frequencies_3d,
+    get_bending_frequencies_3d,
+    compute_frequencies_3d_classified,
+)
 
 
 def compute_frequencies(
@@ -27,7 +31,8 @@ def compute_frequencies(
     num_modes: int,
     analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
     ny: int = 2,
-    nz: int = 2
+    nz: int = 2,
+    target_modes: Optional[List[str]] = None,
 ) -> List[float]:
     """
     Compute natural frequencies for a bar with given element heights.
@@ -43,6 +48,9 @@ def compute_frequencies(
         analysis_mode: BEAM_2D (fast) or SOLID_3D (accurate)
         ny: Number of elements in width direction (3D only)
         nz: Number of elements in thickness direction (3D only)
+        target_modes: List of target mode identifiers like ['V1', 'V2', 'V3'] or ['V1', 'V2', 'T1'].
+                     Only used for 3D analysis. If None, returns first N modes (unclassified).
+                     V=vertical_bending, T=torsional, L=lateral, A=axial
 
     Returns:
         List of natural frequencies in Hz
@@ -50,13 +58,95 @@ def compute_frequencies(
     if analysis_mode == AnalysisMode.SOLID_3D:
         # 3D solid element analysis
         length = le * len(element_heights)
-        return compute_frequencies_3d(
-            element_heights, length, b, E, rho, nu, num_modes, ny, nz
-        )
+
+        if target_modes is not None:
+            # Use classified mode extraction
+            return compute_frequencies_for_target_modes(
+                element_heights, length, b, E, rho, nu, target_modes, ny, nz
+            )
+        else:
+            # Legacy behavior: return first N modes (unclassified)
+            return compute_frequencies_3d(
+                element_heights, length, b, E, rho, nu, num_modes, ny, nz
+            )
     else:
         # 2D Timoshenko beam analysis (default)
+        # 2D only computes bending modes, so target_modes is ignored
         K, M = assemble_global_matrices(element_heights, le, b, E, rho, nu)
         return solve_generalized_eigenvalue(K, M, num_modes)
+
+
+def compute_frequencies_for_target_modes(
+    element_heights: List[float],
+    length: float,
+    width: float,
+    E: float,
+    rho: float,
+    nu: float,
+    target_modes: List[str],
+    ny: int = 2,
+    nz: int = 2,
+) -> List[float]:
+    """
+    Compute frequencies for specific target modes using 3D FEM with classification.
+
+    Args:
+        element_heights: Height of each element along bar length (m)
+        length: Bar length (m)
+        width: Bar width (m)
+        E: Young's modulus (Pa)
+        rho: Density (kg/m^3)
+        nu: Poisson's ratio
+        target_modes: List of mode identifiers like ['V1', 'V2', 'V3'] or ['V1', 'T1', 'V2']
+                     V=vertical_bending, T=torsional, L=lateral, A=axial
+        ny: Number of elements in width direction
+        nz: Number of elements in thickness direction
+
+    Returns:
+        List of frequencies in Hz, one per target mode (in order specified)
+    """
+    # Parse target modes to determine how many of each type we need
+    mode_type_map = {
+        'V': 'vertical_bending',
+        'T': 'torsional',
+        'L': 'lateral',
+        'A': 'axial',
+    }
+
+    # Count max mode number needed per type
+    max_per_type = {'vertical_bending': 0, 'torsional': 0, 'lateral': 0, 'axial': 0}
+    parsed_targets = []
+    for mode_str in target_modes:
+        if len(mode_str) >= 2:
+            type_char = mode_str[0].upper()
+            mode_num = int(mode_str[1:])
+            mode_type = mode_type_map.get(type_char)
+            if mode_type:
+                parsed_targets.append((mode_type, mode_num))
+                max_per_type[mode_type] = max(max_per_type[mode_type], mode_num)
+
+    # Request enough modes to find all needed
+    total_modes_needed = sum(max_per_type.values())
+    num_request = max(total_modes_needed * 2 + 6, 12)  # Request extra for safety
+
+    # Compute classified frequencies
+    all_frequencies, classified, _ = compute_frequencies_3d_classified(
+        element_heights, length, width, E, rho, nu, num_request, ny, nz
+    )
+
+    # Extract frequencies in the order specified by target_modes
+    result = []
+    for mode_type, mode_num in parsed_targets:
+        family_modes = classified.get(mode_type, [])
+        # mode_number is 1-indexed in the classification
+        matching = [m for m in family_modes if m['mode_number'] == mode_num]
+        if matching:
+            result.append(matching[0]['frequency'])
+        else:
+            # Mode not found - return a very high frequency to penalize
+            result.append(float('inf'))
+
+    return result
 
 
 def compute_frequencies_from_genes(
@@ -68,7 +158,8 @@ def compute_frequencies_from_genes(
     num_cuts: int = 0,
     analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
     ny: int = 2,
-    nz: int = 2
+    nz: int = 2,
+    target_modes: Optional[List[str]] = None,
 ) -> List[float]:
     """
     Compute frequencies directly from cut parameters (genes).
@@ -84,18 +175,22 @@ def compute_frequencies_from_genes(
         analysis_mode: BEAM_2D (fast) or SOLID_3D (accurate)
         ny: Number of elements in width direction (3D only)
         nz: Number of elements in thickness direction (3D only)
+        target_modes: List of target mode identifiers like ['V1', 'V2', 'V3'] or ['V1', 'V2', 'T1'].
+                     Only used for 3D analysis. If None, returns first N modes (unclassified).
 
     Returns:
         List of natural frequencies in Hz
     """
     # Handle length adjustment if present
+    # Length adjust gene is at position num_cuts * 2 (after all cut genes)
     bar_length = bar.L
-    if num_cuts > 0 and len(genes) > num_cuts * 2:
-        length_adjust = genes[num_cuts * 2]
+    expected_cut_genes = num_cuts * 2
+    if len(genes) > expected_cut_genes:
+        length_adjust = genes[expected_cut_genes]
         bar_length = bar.L - 2 * length_adjust
 
     # Parse genes into cuts
-    cut_genes = genes[:num_cuts * 2] if num_cuts > 0 else genes
+    cut_genes = genes[:expected_cut_genes] if num_cuts > 0 else []
     cuts = genes_to_cuts(cut_genes)
 
     # Sort by lambda descending (largest first)
@@ -128,7 +223,8 @@ def compute_frequencies_from_genes(
         num_modes,
         analysis_mode,
         ny,
-        nz
+        nz,
+        target_modes,
     )
 
 
@@ -146,20 +242,27 @@ def _compute_single_fitness(
     num_cuts: int,
     analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
     ny: int = 2,
-    nz: int = 2
+    nz: int = 2,
+    target_modes: Optional[List[str]] = None,
 ) -> float:
     """
     Compute fitness for a single individual.
     Internal function used by batch_compute_fitness.
+
+    Args:
+        target_modes: For 3D analysis, specifies which modes to tune (e.g., ['V1', 'V2', 'V3']).
+                     If None, uses first N modes by frequency (unclassified).
     """
     # Handle length adjustment if present
+    # Length adjust gene is at position num_cuts * 2 (after all cut genes)
     effective_length = bar_length
-    if num_cuts > 0 and len(genes) > num_cuts * 2:
-        length_adjust = genes[num_cuts * 2]
+    expected_cut_genes = num_cuts * 2
+    if len(genes) > expected_cut_genes:
+        length_adjust = genes[expected_cut_genes]
         effective_length = bar_length - 2 * length_adjust
 
     # Parse genes into cuts
-    cut_genes = genes[:num_cuts * 2] if num_cuts > 0 else genes
+    cut_genes = genes[:expected_cut_genes] if num_cuts > 0 else []
     cuts = genes_to_cuts(cut_genes)
     cuts = sorted(cuts, key=lambda c: c.lambda_, reverse=True)
 
@@ -191,7 +294,8 @@ def _compute_single_fitness(
             len(target_frequencies),
             analysis_mode,
             ny,
-            nz
+            nz,
+            target_modes,
         )
     except Exception:
         return float('inf')
@@ -227,7 +331,8 @@ def batch_compute_fitness(
     analysis_mode: AnalysisMode = AnalysisMode.BEAM_2D,
     ny: int = 2,
     nz: int = 2,
-    parallel_mode: Literal['threading', 'multiprocessing', 'auto'] = 'auto'
+    parallel_mode: Literal['threading', 'multiprocessing', 'auto'] = 'auto',
+    target_modes: Optional[List[str]] = None,
 ) -> List[float]:
     """
     Batch compute fitness for entire population using parallel execution.
@@ -246,6 +351,8 @@ def batch_compute_fitness(
         nz: Number of elements in thickness direction (3D only)
         parallel_mode: 'threading' (lower overhead, good for NumPy),
                       'multiprocessing' (bypasses GIL), or 'auto'
+        target_modes: For 3D analysis, specifies which modes to tune (e.g., ['V1', 'V2', 'V3']).
+                     If None, uses first N modes by frequency (unclassified).
 
     Returns:
         List of fitness values for each individual
@@ -283,7 +390,8 @@ def batch_compute_fitness(
                 num_cuts,
                 analysis_mode,
                 ny,
-                nz
+                nz,
+                target_modes,
             ): idx
             for idx, genes in enumerate(genes_array)
         }

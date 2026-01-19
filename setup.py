@@ -36,5 +36,9 @@ setup(
             "pytest>=6.0",
             "pytest-cov>=2.0",
         ],
+        "fast": [
+            "primme>=3.2.0",
+            "pypardiso>=0.4.0",
+        ],
     },
 )

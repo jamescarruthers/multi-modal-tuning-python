@@ -15,8 +15,50 @@ import os
 import numpy as np
 from scipy import linalg
 from scipy.sparse import lil_matrix, csr_matrix
-from scipy.sparse.linalg import eigsh
+from scipy.sparse.linalg import eigsh, LinearOperator
 import math
+
+# Try to import pypardiso for faster sparse solves
+try:
+    from pypardiso import spsolve as pardiso_spsolve
+    HAS_PYPARDISO = True
+except ImportError:
+    HAS_PYPARDISO = False
+
+# Try to import primme for faster eigenvalue solves
+try:
+    import primme
+    HAS_PRIMME = True
+except ImportError:
+    HAS_PRIMME = False
+
+
+def _create_shift_invert_operator(K, M, sigma):
+    """
+    Create a LinearOperator for shift-invert mode using PyPardiso.
+
+    For generalized eigenvalue problem K*x = lambda*M*x with shift sigma,
+    we need to solve (K - sigma*M)*y = M*x efficiently.
+
+    Args:
+        K: Stiffness matrix (sparse)
+        M: Mass matrix (sparse)
+        sigma: Shift value
+
+    Returns:
+        LinearOperator that computes (K - sigma*M)^(-1) @ M @ x
+    """
+    # Compute shifted matrix
+    K_shifted = (K - sigma * M).tocsr()
+    M_csr = M.tocsr() if hasattr(M, 'tocsr') else csr_matrix(M)
+    n = K.shape[0]
+
+    def matvec(x):
+        # First multiply by M, then solve with K_shifted
+        Mx = M_csr @ x
+        return pardiso_spsolve(K_shifted, Mx)
+
+    return LinearOperator((n, n), matvec=matvec, dtype=K.dtype)
 
 
 def gauss_points_3d() -> Tuple[np.ndarray, np.ndarray]:
@@ -583,12 +625,33 @@ def solve_eigenvalue_3d(
         sigma = 1.0  # Small shift
 
         try:
-            eigenvalues, _ = eigsh(K, k=num_request, M=M, sigma=sigma, which='LM')
+            if HAS_PRIMME:
+                # Use PRIMME for potentially faster eigenvalue solves
+                # PRIMME's eigsh handles generalized problems well
+                eigenvalues, _ = primme.eigsh(
+                    K, k=num_request, M=M, sigma=sigma, which='SM',
+                    tol=1e-10, return_eigenvectors=True
+                )
+            elif HAS_PYPARDISO:
+                # Use PyPardiso for faster shift-invert solves
+                OPinv = _create_shift_invert_operator(K, M, sigma)
+                eigenvalues, _ = eigsh(K, k=num_request, M=M, sigma=sigma, which='LM', OPinv=OPinv)
+            else:
+                eigenvalues, _ = eigsh(K, k=num_request, M=M, sigma=sigma, which='LM')
         except Exception:
             # Fallback: add regularization
             n = K.shape[0]
             M_reg = M + 1e-10 * csr_matrix(np.eye(n))
-            eigenvalues, _ = eigsh(K, k=num_request, M=M_reg, sigma=sigma, which='LM')
+            if HAS_PRIMME:
+                eigenvalues, _ = primme.eigsh(
+                    K, k=num_request, M=M_reg, sigma=sigma, which='SM',
+                    tol=1e-10, return_eigenvectors=True
+                )
+            elif HAS_PYPARDISO:
+                OPinv = _create_shift_invert_operator(K, M_reg, sigma)
+                eigenvalues, _ = eigsh(K, k=num_request, M=M_reg, sigma=sigma, which='LM', OPinv=OPinv)
+            else:
+                eigenvalues, _ = eigsh(K, k=num_request, M=M_reg, sigma=sigma, which='LM')
     else:
         # Dense solver
         n = K.shape[0]
@@ -824,11 +887,31 @@ def solve_eigenvalue_3d_with_vectors(
         sigma = 1.0
 
         try:
-            eigenvalues, eigenvectors = eigsh(K, k=num_request, M=M, sigma=sigma, which='LM')
+            if HAS_PRIMME:
+                # Use PRIMME for potentially faster eigenvalue solves
+                eigenvalues, eigenvectors = primme.eigsh(
+                    K, k=num_request, M=M, sigma=sigma, which='SM',
+                    tol=1e-10, return_eigenvectors=True
+                )
+            elif HAS_PYPARDISO:
+                # Use PyPardiso for faster shift-invert solves
+                OPinv = _create_shift_invert_operator(K, M, sigma)
+                eigenvalues, eigenvectors = eigsh(K, k=num_request, M=M, sigma=sigma, which='LM', OPinv=OPinv)
+            else:
+                eigenvalues, eigenvectors = eigsh(K, k=num_request, M=M, sigma=sigma, which='LM')
         except Exception:
             n = K.shape[0]
             M_reg = M + 1e-10 * csr_matrix(np.eye(n))
-            eigenvalues, eigenvectors = eigsh(K, k=num_request, M=M_reg, sigma=sigma, which='LM')
+            if HAS_PRIMME:
+                eigenvalues, eigenvectors = primme.eigsh(
+                    K, k=num_request, M=M_reg, sigma=sigma, which='SM',
+                    tol=1e-10, return_eigenvectors=True
+                )
+            elif HAS_PYPARDISO:
+                OPinv = _create_shift_invert_operator(K, M_reg, sigma)
+                eigenvalues, eigenvectors = eigsh(K, k=num_request, M=M_reg, sigma=sigma, which='LM', OPinv=OPinv)
+            else:
+                eigenvalues, eigenvectors = eigsh(K, k=num_request, M=M_reg, sigma=sigma, which='LM')
     else:
         n = K.shape[0]
         M_reg = M.copy()
@@ -970,6 +1053,181 @@ def get_bending_frequencies_3d(
     bending_freqs = [m['frequency'] for m in bending_modes[:num_bending_modes]]
 
     return bending_freqs
+
+
+def compute_frequencies_3d_with_mode_shapes(
+    element_heights: List[float],
+    length: float,
+    width: float,
+    E: float,
+    rho: float,
+    nu: float,
+    num_modes: int = 10,
+    ny: int = 2,
+    nz: int = 2
+) -> dict:
+    """
+    Compute natural frequencies with full mode shape data for visualization.
+
+    Returns all data needed for mode shape visualization including:
+    - Frequencies and classification for all modes
+    - Mode shape displacements (per-node)
+    - Strain energy (per-element)
+    - Mesh data (nodes, elements, heights)
+
+    Args:
+        element_heights: Height of each element along bar length (m)
+        length: Bar length (m)
+        width: Bar width (m)
+        E: Young's modulus (Pa)
+        rho: Density (kg/m^3)
+        nu: Poisson's ratio
+        num_modes: Number of modes to extract
+        ny: Number of elements in width direction
+        nz: Number of elements in thickness direction
+
+    Returns:
+        Dictionary with:
+        - frequencies: List of all frequencies
+        - classified_modes: Dict with modes organized by type
+        - mode_shapes: List of mode shape data with displacements and strain energy
+        - mesh: Dict with nodes, elements, heights for visualization
+    """
+    nx = len(element_heights)
+
+    # Generate mesh
+    nodes, elements, heights_per_element = generate_bar_mesh_3d(
+        length, width, element_heights, nx, ny, nz
+    )
+
+    # Determine if we should use sparse matrices
+    num_dof = 3 * len(nodes)
+    use_sparse = num_dof > 1000
+
+    # Assemble matrices
+    K, M = assemble_global_matrices_3d(nodes, elements, E, nu, rho, use_sparse)
+
+    # Solve eigenvalue problem with mode shapes
+    frequencies, mode_shape_vectors = solve_eigenvalue_3d_with_vectors(K, M, num_modes, use_sparse)
+
+    # Classify modes
+    classified = classify_all_modes(frequencies, mode_shape_vectors, nodes)
+
+    # Compute strain energy per element for each mode
+    num_elements = len(elements)
+    mode_shapes_data = []
+
+    for mode_idx, freq in enumerate(frequencies):
+        if mode_idx >= mode_shape_vectors.shape[1]:
+            break
+
+        mode_vector = mode_shape_vectors[:, mode_idx]
+
+        # Compute strain energy per element: SE_e = 0.5 * u_e^T * Ke * u_e
+        strain_energy = []
+        for elem_idx in range(num_elements):
+            elem_nodes = elements[elem_idx]
+            node_coords = nodes[elem_nodes]
+
+            # Get element stiffness matrix
+            Ke, _ = compute_hex8_matrices(node_coords, E, nu, rho)
+
+            # Extract element DOFs from global mode vector
+            elem_dofs = []
+            for node_idx in elem_nodes:
+                elem_dofs.extend([3 * node_idx, 3 * node_idx + 1, 3 * node_idx + 2])
+            u_e = mode_vector[elem_dofs]
+
+            # Compute strain energy for this element
+            se = 0.5 * float(u_e @ Ke @ u_e)
+            strain_energy.append(se)
+
+        # Normalize strain energy to 0-1 range
+        max_se = max(strain_energy) if strain_energy else 1.0
+        if max_se > 0:
+            strain_energy_normalized = [se / max_se for se in strain_energy]
+        else:
+            strain_energy_normalized = strain_energy
+
+        # Compute max displacement for scaling
+        num_nodes_count = len(nodes)
+        displacement_magnitudes = []
+        for node_idx in range(num_nodes_count):
+            dx = mode_vector[3 * node_idx]
+            dy = mode_vector[3 * node_idx + 1]
+            dz = mode_vector[3 * node_idx + 2]
+            mag = float(np.sqrt(dx**2 + dy**2 + dz**2))
+            displacement_magnitudes.append(mag)
+        max_displacement = max(displacement_magnitudes) if displacement_magnitudes else 1.0
+
+        # Find mode classification
+        mode_type = 'unknown'
+        mode_number = 0
+        for family_name, family_modes in classified.items():
+            for m in family_modes:
+                if m['mode_index'] == mode_idx:
+                    mode_type = family_name
+                    mode_number = m['mode_number']
+                    break
+
+        mode_shapes_data.append({
+            'mode_index': mode_idx,
+            'frequency': float(freq),
+            'mode_type': mode_type,
+            'mode_number': mode_number,
+            'displacements': [float(v) for v in mode_vector],
+            'strain_energy': strain_energy_normalized,
+            'max_displacement': float(max_displacement),
+        })
+
+    # Prepare mesh data for visualization
+    mesh_data = {
+        'vertices': [float(v) for v in nodes.flatten()],
+        'indices': _hex_to_triangles(elements),
+        'heights': [float(h) for h in heights_per_element],
+        'bar_length': float(length),
+        'bar_width': float(width),
+        'bar_height': float(element_heights[0]) if element_heights else 0.0,
+    }
+
+    return {
+        'frequencies': [float(f) for f in frequencies],
+        'classified_modes': classified,
+        'mode_shapes': mode_shapes_data,
+        'num_nodes': len(nodes),
+        'num_elements': num_elements,
+        'mesh': mesh_data,
+    }
+
+
+def _hex_to_triangles(elements: np.ndarray) -> List[int]:
+    """
+    Convert hex8 elements to triangle indices for Three.js visualization.
+
+    Args:
+        elements: (num_elements, 8) array of node indices
+
+    Returns:
+        Flat list of triangle indices
+    """
+    # Face definitions (node indices within hex)
+    faces = [
+        [0, 3, 2, 1],  # bottom (z-) - reversed for outward normal
+        [4, 5, 6, 7],  # top (z+)
+        [0, 1, 5, 4],  # front (y-)
+        [2, 3, 7, 6],  # back (y+)
+        [0, 4, 7, 3],  # left (x-)
+        [1, 2, 6, 5],  # right (x+)
+    ]
+
+    triangles = []
+    for elem in elements:
+        for face in faces:
+            # Each quad face -> 2 triangles
+            triangles.extend([int(elem[face[0]]), int(elem[face[1]]), int(elem[face[2]])])
+            triangles.extend([int(elem[face[0]]), int(elem[face[2]]), int(elem[face[3]])])
+
+    return triangles
 
 
 def compute_frequencies_3d_adaptive(

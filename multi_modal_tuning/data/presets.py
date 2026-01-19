@@ -93,72 +93,55 @@ TUNING_PRESETS: List[TuningPreset] = [
     ),
 
     # === Combined bending + torsional presets (Soares et al. 2021) ===
-    # Notation: ratios = bending modes, torsional_ratios = torsional modes
+    # These use target_modes to specify which mode each ratio corresponds to
+    # The ratios list contains all target frequencies in the same order as target_modes
     TuningPreset(
         name="1:4:10|4",
-        ratios=[1, 4, 10],
-        torsional_ratios=[4],
-        description="Marimba with T1 tuned to unison with B2 (Soares)",
+        ratios=[1, 4, 10, 4],  # V1=1×, V2=4×, V3=10×, T1=4×
+        target_modes=['V1', 'V2', 'V3', 'T1'],
+        description="Marimba with T1 tuned to unison with V2 (Soares)",
         instrument="Marimba"
     ),
     TuningPreset(
         name="1:4:10|5",
-        ratios=[1, 4, 10],
-        torsional_ratios=[5],
+        ratios=[1, 4, 10, 5],  # V1=1×, V2=4×, V3=10×, T1=5×
+        target_modes=['V1', 'V2', 'V3', 'T1'],
         description="Marimba with T1 at 5× (natural position)",
         instrument="Marimba"
     ),
     TuningPreset(
         name="1:4:10|6",
-        ratios=[1, 4, 10],
-        torsional_ratios=[6],
-        description="Marimba with T1 at 6× (between B2 and B3)",
+        ratios=[1, 4, 10, 6],  # V1=1×, V2=4×, V3=10×, T1=6×
+        target_modes=['V1', 'V2', 'V3', 'T1'],
+        description="Marimba with T1 at 6× (between V2 and V3)",
         instrument="Marimba"
     ),
     TuningPreset(
         name="1:4:10:16|4:16",
-        ratios=[1, 4, 10, 16],
-        torsional_ratios=[4, 16],
-        description="4 bending + 2 torsional (T1=B2, T2=B4 unison)",
+        ratios=[1, 4, 10, 16, 4, 16],  # V1=1×, V2=4×, V3=10×, V4=16×, T1=4×, T2=16×
+        target_modes=['V1', 'V2', 'V3', 'V4', 'T1', 'T2'],
+        description="4 bending + 2 torsional (T1=V2, T2=V4 unison)",
         instrument="Vibraphone"
     ),
     TuningPreset(
         name="1:4:10:16|5:15",
-        ratios=[1, 4, 10, 16],
-        torsional_ratios=[5, 15],
+        ratios=[1, 4, 10, 16, 5, 15],  # V1=1×, V2=4×, V3=10×, V4=16×, T1=5×, T2=15×
+        target_modes=['V1', 'V2', 'V3', 'V4', 'T1', 'T2'],
         description="4 bending + 2 torsional (separate frequencies)",
         instrument="Vibraphone"
     ),
     TuningPreset(
         name="1:4:10:16|5:20",
-        ratios=[1, 4, 10, 16],
-        torsional_ratios=[5, 20],
+        ratios=[1, 4, 10, 16, 5, 20],  # V1=1×, V2=4×, V3=10×, V4=16×, T1=5×, T2=20×
+        target_modes=['V1', 'V2', 'V3', 'V4', 'T1', 'T2'],
         description="4 bending + 2 torsional (from Soares paper)",
         instrument="Vibraphone"
     ),
     TuningPreset(
         name="1:4:10:16|6:18",
-        ratios=[1, 4, 10, 16],
-        torsional_ratios=[6, 18],
+        ratios=[1, 4, 10, 16, 6, 18],  # V1=1×, V2=4×, V3=10×, V4=16×, T1=6×, T2=18×
+        target_modes=['V1', 'V2', 'V3', 'V4', 'T1', 'T2'],
         description="4 bending + 2 torsional (from Soares paper)",
-        instrument="Vibraphone"
-    ),
-
-    # === Flexible torsional presets (modes snap to nearest harmonic) ===
-    TuningPreset(
-        name="1:4:10|flex",
-        ratios=[1, 4, 10],
-        torsional_ratios=[4, 5, 6, 7, 8],  # Allowed positions
-        flexible_torsional=True,
-        description="Marimba with flexible T1 (snaps to nearest harmonic)",
-        instrument="Marimba"
-    ),
-    TuningPreset(
-        name="1:4:10:16|flex",
-        ratios=[1, 4, 10, 16],
-        torsional_ratios=[4, 5, 6, 7, 8, 15, 16, 17, 18, 19, 20],  # Allowed positions
-        flexible_torsional=True,
-        description="4 bending + flexible torsional (Soares approach)",
         instrument="Vibraphone"
     ),
 ]
