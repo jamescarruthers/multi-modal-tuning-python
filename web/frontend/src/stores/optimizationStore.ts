@@ -116,6 +116,8 @@ const initialState: OptimizationState = {
   computedFrequencies: [],
   errorsCents: [],
   currentMesh: null,
+  batchProgress: null,
+  femProgress: null,
 
   // History
   generations: [],
@@ -189,10 +191,13 @@ export const useOptimizationStore = create<OptimizationState & OptimizationActio
     updateProgress: (update) =>
       set({
         currentGeneration: update.generation,
-        bestFitness: update.best_fitness,
+        // Handle null (from infinity) as Infinity for display
+        bestFitness: update.best_fitness ?? Infinity,
         computedFrequencies: update.computed_frequencies,
         errorsCents: update.errors_cents,
         currentMesh: update.mesh || null,
+        batchProgress: update.batch_progress || null,
+        femProgress: update.fem_progress || null,
       }),
 
     addGeneration: (gen) =>
@@ -271,6 +276,8 @@ export const useOptimizationStore = create<OptimizationState & OptimizationActio
         computedFrequencies: [],
         errorsCents: [],
         currentMesh: null,
+        batchProgress: null,
+        femProgress: null,
         generations: [],
         playbackIndex: -1,
         isPlaying: false,

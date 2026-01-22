@@ -19,6 +19,7 @@ from ..types import (
     EAParameters,
     OptimizationResult,
     ProgressUpdate,
+    BatchProgressState,
     AnalysisMode,
 )
 from ..physics.frequencies import compute_frequencies_from_genes, batch_compute_fitness
@@ -120,6 +121,7 @@ def _batch_evaluate_population(
     ny: int = 2,
     nz: int = 2,
     target_modes: Optional[List[str]] = None,
+    on_batch_progress: Optional[Callable[[BatchProgressState], None]] = None,
 ) -> List[Individual]:
     """
     Batch evaluate population fitness using multithreading.
@@ -127,6 +129,7 @@ def _batch_evaluate_population(
     Args:
         target_modes: For 3D analysis, specifies which modes to tune (e.g., ['V1', 'V2', 'V3']).
                      If None, uses first N modes by frequency (unclassified).
+        on_batch_progress: Optional callback for batch progress updates during evaluation.
     """
     genes_array = [ind.genes for ind in population]
     tuning_errors = batch_compute_fitness(
@@ -142,6 +145,8 @@ def _batch_evaluate_population(
         ny,
         nz,
         target_modes=target_modes,
+        on_batch_progress=on_batch_progress,
+        progress_interval=5 if analysis_mode == AnalysisMode.SOLID_3D else 20,
     )
 
     # Apply penalties if needed
@@ -218,6 +223,48 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     nz = ea_params.num_elements_z
     target_modes = ea_params.target_modes
 
+    # Track current batch progress for reporting
+    current_batch_progress: List[Optional[BatchProgressState]] = [None]
+
+    def batch_progress_handler(bp: BatchProgressState) -> None:
+        """Handle batch progress updates, forwarding to main progress callback."""
+        current_batch_progress[0] = bp
+        # Send immediate progress update with batch info
+        if on_progress:
+            if best_ever_holder[0] is not None:
+                # We have a best individual - include full frequency data
+                freq_data = _compute_frequencies_and_errors(
+                    best_ever_holder[0].genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
+                    analysis_mode, ny, nz, target_modes
+                )
+                on_progress(ProgressUpdate(
+                    generation=generation_holder[0],
+                    best_fitness=best_ever_holder[0].fitness,
+                    best_individual=clone_individual(best_ever_holder[0]),
+                    average_fitness=best_ever_holder[0].fitness,
+                    computed_frequencies=freq_data["computed_frequencies"],
+                    errors_in_cents=freq_data["errors_in_cents"],
+                    length_trim=freq_data["length_trim"],
+                    batch_progress=bp,
+                ))
+            else:
+                # Initial population evaluation - send batch progress with placeholder individual
+                placeholder = Individual(genes=[], fitness=float('inf'))
+                on_progress(ProgressUpdate(
+                    generation=0,
+                    best_fitness=float('inf'),
+                    best_individual=placeholder,
+                    average_fitness=float('inf'),
+                    computed_frequencies=[],
+                    errors_in_cents=[],
+                    length_trim=0.0,
+                    batch_progress=bp,
+                ))
+
+    # Holders for closure access
+    best_ever_holder: List[Optional[Individual]] = [None]
+    generation_holder: List[int] = [0]
+
     # Report Generation 0: uncut bar baseline
     if on_progress:
         uncut_bar = create_uncut_bar_individual(num_cuts, bounds, bar.h0)
@@ -243,11 +290,15 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     # Initialize population (with optional seed)
     population = initialize_population(ea_params.population_size, num_cuts, bounds, seed_genes)
 
+    # Only use batch progress for 3D analysis (where it's slow enough to matter)
+    batch_cb = batch_progress_handler if (on_progress and analysis_mode == AnalysisMode.SOLID_3D) else None
+
     # Evaluate initial population
     population = _batch_evaluate_population(
         population, bar, material, target_frequencies,
         penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-        analysis_mode, ny, nz, target_modes
+        analysis_mode, ny, nz, target_modes,
+        on_batch_progress=batch_cb,
     )
 
     # Calculate percentages for different operations
@@ -256,7 +307,9 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
     num_crossover_pairs = (num_crossover + 1) // 2
 
     best_ever = get_best_individual(population)
+    best_ever_holder[0] = best_ever
     generation = 0
+    generation_holder[0] = generation
 
     # Main evolution loop
     while generation < ea_params.max_generations:
@@ -312,7 +365,8 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
             evaluated_offspring = _batch_evaluate_population(
                 new_offspring, bar, material, target_frequencies,
                 penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-                analysis_mode, ny, nz, target_modes
+                analysis_mode, ny, nz, target_modes,
+                on_batch_progress=batch_cb,
             )
             next_generation.extend(evaluated_offspring)
 
@@ -323,8 +377,10 @@ def run_evolutionary_algorithm(config: EAConfig) -> OptimizationResult:
         current_best = get_best_individual(population)
         if current_best.fitness < best_ever.fitness:
             best_ever = clone_individual(current_best)
+            best_ever_holder[0] = best_ever
 
         generation += 1
+        generation_holder[0] = generation
 
         # Report progress
         if on_progress:
@@ -434,6 +490,48 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
     nz = ea_params.num_elements_z
     target_modes = ea_params.target_modes
 
+    # Track current batch progress for reporting
+    current_batch_progress_adaptive: List[Optional[BatchProgressState]] = [None]
+
+    def batch_progress_handler_adaptive(bp: BatchProgressState) -> None:
+        """Handle batch progress updates, forwarding to main progress callback."""
+        current_batch_progress_adaptive[0] = bp
+        # Send immediate progress update with batch info
+        if on_progress:
+            if best_ever_holder_adaptive[0] is not None:
+                # We have a best individual - include full frequency data
+                freq_data = _compute_frequencies_and_errors(
+                    best_ever_holder_adaptive[0].genes, bar, material, target_frequencies, ea_params.num_elements, num_cuts,
+                    analysis_mode, ny, nz, target_modes
+                )
+                on_progress(ProgressUpdate(
+                    generation=generation_holder_adaptive[0],
+                    best_fitness=best_ever_holder_adaptive[0].fitness,
+                    best_individual=clone_individual(best_ever_holder_adaptive[0]),
+                    average_fitness=best_ever_holder_adaptive[0].fitness,
+                    computed_frequencies=freq_data["computed_frequencies"],
+                    errors_in_cents=freq_data["errors_in_cents"],
+                    length_trim=freq_data["length_trim"],
+                    batch_progress=bp,
+                ))
+            else:
+                # Initial population evaluation - send batch progress with placeholder individual
+                placeholder = Individual(genes=[], fitness=float('inf'))
+                on_progress(ProgressUpdate(
+                    generation=0,
+                    best_fitness=float('inf'),
+                    best_individual=placeholder,
+                    average_fitness=float('inf'),
+                    computed_frequencies=[],
+                    errors_in_cents=[],
+                    length_trim=0.0,
+                    batch_progress=bp,
+                ))
+
+    # Holders for closure access
+    best_ever_holder_adaptive: List[Optional[Individual]] = [None]
+    generation_holder_adaptive: List[int] = [0]
+
     # Report Generation 0: uncut bar baseline
     if on_progress:
         uncut_bar = create_uncut_bar_individual(num_cuts, bounds, bar.h0)
@@ -461,17 +559,23 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
     for ind in population:
         ind.sigmas = [0.2] * num_genes
 
+    # Only use batch progress for 3D analysis (where it's slow enough to matter)
+    batch_cb_adaptive = batch_progress_handler_adaptive if (on_progress and analysis_mode == AnalysisMode.SOLID_3D) else None
+
     # Evaluate initial population
     population = _batch_evaluate_population(
         population, bar, material, target_frequencies,
         penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-        analysis_mode, ny, nz, target_modes
+        analysis_mode, ny, nz, target_modes,
+        on_batch_progress=batch_cb_adaptive,
     )
 
     num_elite = max(1, int(ea_params.population_size * ea_params.elitism_percent / 100))
 
     best_ever = get_best_individual(population)
+    best_ever_holder_adaptive[0] = best_ever
     generation = 0
+    generation_holder_adaptive[0] = generation
 
     while generation < ea_params.max_generations:
         if should_stop and should_stop():
@@ -501,7 +605,8 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
             evaluated_offspring = _batch_evaluate_population(
                 new_offspring, bar, material, target_frequencies,
                 penalty_type, penalty_weight, ea_params.num_elements, f1_priority, num_cuts, max_workers,
-                analysis_mode, ny, nz, target_modes
+                analysis_mode, ny, nz, target_modes,
+                on_batch_progress=batch_cb_adaptive,
             )
             next_generation.extend(evaluated_offspring)
 
@@ -510,8 +615,10 @@ def run_adaptive_evolution(config: EAConfig) -> OptimizationResult:
         current_best = get_best_individual(population)
         if current_best.fitness < best_ever.fitness:
             best_ever = clone_individual(current_best)
+            best_ever_holder_adaptive[0] = best_ever
 
         generation += 1
+        generation_holder_adaptive[0] = generation
 
         if on_progress:
             stats = calculate_population_stats(population)

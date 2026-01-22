@@ -14,6 +14,7 @@ from multi_modal_tuning.types import (
     BarParameters,
     EAParameters,
     ProgressUpdate,
+    BatchProgressState,
     OptimizationResult,
     VariableBounds,
     AnalysisMode,
@@ -201,15 +202,45 @@ async def run_optimization_with_progress(
                         errors_cents.append(0.0)
 
             # Ensure all numpy types are converted to native Python types for JSON serialization
+            # Handle infinity values that can't be serialized to JSON
+            best_fitness_val = float(update.best_fitness) if update.best_fitness is not None else 0.0
+            if math.isinf(best_fitness_val):
+                best_fitness_val = None  # Will be handled as Infinity on frontend
+
             progress_data = {
                 "type": "progress",
                 "generation": int(update.generation),
-                "best_fitness": float(update.best_fitness) if update.best_fitness is not None else 0.0,
+                "best_fitness": best_fitness_val,
                 "computed_frequencies": [float(f) for f in update.computed_frequencies] if update.computed_frequencies else [],
                 "errors_cents": [float(e) for e in errors_cents],
                 "best_genes": [float(g) for g in best_genes],
                 "mesh": mesh_data,
             }
+
+            # Add batch progress if available
+            if update.batch_progress is not None:
+                bp = update.batch_progress
+                # Handle infinity in best_fitness_so_far
+                best_so_far = None
+                if bp.best_fitness_so_far is not None:
+                    best_so_far = float(bp.best_fitness_so_far)
+                    if math.isinf(best_so_far):
+                        best_so_far = None
+                progress_data["batch_progress"] = {
+                    "completed": bp.completed,
+                    "total": bp.total,
+                    "best_fitness_so_far": best_so_far,
+                    "message": bp.message,
+                }
+
+            # Add FEM progress if available
+            if update.fem_progress is not None:
+                fp = update.fem_progress
+                progress_data["fem_progress"] = {
+                    "stage": fp.stage,
+                    "percent": float(fp.percent),
+                    "message": fp.message,
+                }
 
             progress_callback(progress_data)
         except Exception:

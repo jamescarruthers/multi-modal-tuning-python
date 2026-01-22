@@ -146,6 +146,23 @@ class OptimizationResult:
 
 
 @dataclass
+class FEMProgressState:
+    """Progress state for FEM computation stages."""
+    stage: Literal['mesh', 'assembly', 'eigenvalue', 'classification', 'complete']
+    percent: float  # 0-100
+    message: str  # Human-readable message
+
+
+@dataclass
+class BatchProgressState:
+    """Progress state for batch population evaluation."""
+    completed: int
+    total: int
+    best_fitness_so_far: Optional[float] = None
+    message: str = ""
+
+
+@dataclass
 class ProgressUpdate:
     """Progress update during optimization."""
     generation: int
@@ -155,6 +172,9 @@ class ProgressUpdate:
     computed_frequencies: Optional[List[float]] = None
     errors_in_cents: Optional[List[float]] = None
     length_trim: float = 0.0
+    # Granular progress for slow operations
+    fem_progress: Optional[FEMProgressState] = None
+    batch_progress: Optional[BatchProgressState] = None
 
 
 @dataclass

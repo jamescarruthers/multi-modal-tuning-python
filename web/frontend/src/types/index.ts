@@ -108,6 +108,21 @@ export interface OptimizationConfig {
   mesh_update_interval: number; // Update mesh every N generations (1 = every generation)
 }
 
+// FEM progress state for granular feedback during 3D analysis
+export interface FEMProgressState {
+  stage: 'mesh' | 'assembly' | 'eigenvalue' | 'classification' | 'complete';
+  percent: number;
+  message: string;
+}
+
+// Batch progress state for population evaluation
+export interface BatchProgressState {
+  completed: number;
+  total: number;
+  best_fitness_so_far?: number | null;
+  message: string;
+}
+
 // Progress update from WebSocket
 export interface ProgressUpdate {
   type: 'progress';
@@ -117,6 +132,9 @@ export interface ProgressUpdate {
   errors_cents: number[];
   best_genes: number[];
   mesh?: MeshData;
+  // Granular progress for slow operations
+  batch_progress?: BatchProgressState;
+  fem_progress?: FEMProgressState;
 }
 
 // Individual in population
@@ -225,6 +243,10 @@ export interface OptimizationState {
   eaParams: EAParams;
   surrogateParams: SurrogateParams;
   penaltyConfig: PenaltyConfig;
+
+  // Granular progress for slow operations (3D FEM)
+  batchProgress: BatchProgressState | null;
+  femProgress: FEMProgressState | null;
   lengthAdjustConfig: LengthAdjustConfig;
   numElementsY: number;
   numElementsZ: number;

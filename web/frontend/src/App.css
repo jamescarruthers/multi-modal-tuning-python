@@ -682,3 +682,90 @@
   font-size: 0.7rem;
   color: #666;
 }
+
+/* Batch Progress (for 3D FEM population evaluation) */
+.batch-progress {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #0f3460;
+}
+
+.batch-progress-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  color: #888;
+  margin-bottom: 0.35rem;
+}
+
+.batch-best {
+  color: #22c55e;
+  font-family: monospace;
+}
+
+.progress-bar-secondary {
+  height: 6px;
+  background: #0a1628;
+}
+
+.progress-bar-batch {
+  background: linear-gradient(90deg, #3b82f6, #06b6d4);
+}
+
+/* FEM Progress (stage indicators for 3D analysis) */
+.fem-progress {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: #0f1a2e;
+  border-radius: 4px;
+}
+
+.fem-stage {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.fem-stage-label {
+  color: #666;
+}
+
+.fem-stage-name {
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.fem-stage-percent {
+  color: #888;
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+
+/* FEM stage-specific colors */
+.stage-mesh {
+  background: #1e3a5f;
+  color: #60a5fa;
+}
+
+.stage-assembly {
+  background: #1e3a3f;
+  color: #34d399;
+}
+
+.stage-eigenvalue {
+  background: #3f1e3a;
+  color: #f472b6;
+}
+
+.stage-classification {
+  background: #3f3a1e;
+  color: #fbbf24;
+}
+
+.stage-complete {
+  background: #1e3f1e;
+  color: #22c55e;
+}

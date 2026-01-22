@@ -6,12 +6,12 @@ using the FEM model. Supports both 2D Timoshenko beam and 3D solid
 element analysis.
 """
 
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Callable
 import math
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import os
 
-from ..types import BarParameters, Material, AnalysisMode
+from ..types import BarParameters, Material, AnalysisMode, BatchProgressState
 from .bar_profile import genes_to_cuts
 from .fem_assembly import assemble_global_matrices, solve_generalized_eigenvalue
 from .fem_3d import (
@@ -333,6 +333,8 @@ def batch_compute_fitness(
     nz: int = 2,
     parallel_mode: Literal['threading', 'multiprocessing', 'auto'] = 'auto',
     target_modes: Optional[List[str]] = None,
+    on_batch_progress: Optional[Callable[[BatchProgressState], None]] = None,
+    progress_interval: int = 10,
 ) -> List[float]:
     """
     Batch compute fitness for entire population using parallel execution.
@@ -353,6 +355,8 @@ def batch_compute_fitness(
                       'multiprocessing' (bypasses GIL), or 'auto'
         target_modes: For 3D analysis, specifies which modes to tune (e.g., ['V1', 'V2', 'V3']).
                      If None, uses first N modes by frequency (unclassified).
+        on_batch_progress: Optional callback for batch progress updates
+        progress_interval: How often to report progress (every N completions)
 
     Returns:
         List of fitness values for each individual
@@ -371,6 +375,9 @@ def batch_compute_fitness(
         Executor = ThreadPoolExecutor
 
     fitness_values = [float('inf')] * len(genes_array)
+    total = len(genes_array)
+    completed_count = 0
+    best_fitness_so_far = float('inf')
 
     with Executor(max_workers=max_workers) as executor:
         # Submit all tasks
@@ -396,12 +403,27 @@ def batch_compute_fitness(
             for idx, genes in enumerate(genes_array)
         }
 
-        # Collect results
+        # Collect results with progress reporting
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
             try:
-                fitness_values[idx] = future.result()
+                fitness = future.result()
+                fitness_values[idx] = fitness
+                if fitness < best_fitness_so_far:
+                    best_fitness_so_far = fitness
             except Exception:
                 fitness_values[idx] = float('inf')
+
+            completed_count += 1
+
+            # Report progress periodically
+            if on_batch_progress and (completed_count % progress_interval == 0 or completed_count == total):
+                progress = BatchProgressState(
+                    completed=completed_count,
+                    total=total,
+                    best_fitness_so_far=best_fitness_so_far if best_fitness_so_far < float('inf') else None,
+                    message=f"Evaluating: {completed_count}/{total}"
+                )
+                on_batch_progress(progress)
 
     return fitness_values

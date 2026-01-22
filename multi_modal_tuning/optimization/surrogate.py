@@ -31,6 +31,7 @@ from ..types import (
     EAParameters,
     OptimizationResult,
     ProgressUpdate,
+    BatchProgressState,
     AnalysisMode,
     VariableBounds,
 )
@@ -235,6 +236,10 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
         else:
             Executor = ThreadPoolExecutor
 
+        # Track batch progress for initial sampling
+        initial_completed = 0
+        total_initial = config.initial_points
+
         with Executor(max_workers=max_workers) as executor:
             futures = [executor.submit(evaluate_sample, sample) for sample in initial_samples]
 
@@ -249,14 +254,16 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
                     evaluated_points.append(sample.copy())
                     evaluated_values.append(fitness)
                     evaluations += 1
+                    initial_completed += 1
 
                     if fitness < best_fitness:
                         best_fitness = fitness
                         best_genes = sample.tolist()
 
-                        # Report progress
-                        if config.on_progress:
-                            try:
+                    # Report progress with batch info for 3D analysis
+                    if config.on_progress:
+                        try:
+                            if best_genes:
                                 computed_freq = compute_frequencies_from_genes(
                                     best_genes, config.bar, config.material,
                                     len(config.target_frequencies),
@@ -272,19 +279,33 @@ def run_surrogate_optimization(config: SurrogateConfig) -> OptimizationResult:
                                         errors_cents.append(1200 * math.log2(comp / target))
                                     else:
                                         errors_cents.append(0.0)
-                            except Exception:
+                            else:
                                 computed_freq = []
                                 errors_cents = []
+                        except Exception:
+                            computed_freq = []
+                            errors_cents = []
 
-                            config.on_progress(ProgressUpdate(
-                                generation=evaluations,
-                                best_fitness=best_fitness,
-                                best_individual=Individual(genes=best_genes, fitness=best_fitness),
-                                average_fitness=best_fitness,
-                                computed_frequencies=computed_freq,
-                                errors_in_cents=errors_cents,
-                                length_trim=get_length_adjust_from_genes(best_genes, config.num_cuts)
-                            ))
+                        # Create batch progress for 3D analysis
+                        batch_progress = None
+                        if config.analysis_mode == AnalysisMode.SOLID_3D:
+                            batch_progress = BatchProgressState(
+                                completed=initial_completed,
+                                total=total_initial,
+                                best_fitness_so_far=best_fitness if best_fitness < float('inf') else None,
+                                message=f"Initial sampling: {initial_completed}/{total_initial}"
+                            )
+
+                        config.on_progress(ProgressUpdate(
+                            generation=evaluations,
+                            best_fitness=best_fitness,
+                            best_individual=Individual(genes=best_genes or [], fitness=best_fitness),
+                            average_fitness=best_fitness,
+                            computed_frequencies=computed_freq,
+                            errors_in_cents=errors_cents,
+                            length_trim=get_length_adjust_from_genes(best_genes, config.num_cuts) if best_genes else 0.0,
+                            batch_progress=batch_progress,
+                        ))
                 except Exception:
                     pass
     else:
