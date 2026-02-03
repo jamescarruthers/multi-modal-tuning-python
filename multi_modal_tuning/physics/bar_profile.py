@@ -12,7 +12,7 @@ Key equations from paper:
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 import math
-from ..types import Cut, BarParameters
+from ..types import Cut, BarParameters, Weight
 
 
 def compute_height(
@@ -559,3 +559,195 @@ def generate_profile_points(
     all_points.sort(key=lambda p: p[0])
 
     return all_points
+
+
+# ============================================================================
+# Weight-related functions (for adding masses instead of cutting)
+# ============================================================================
+
+def genes_to_weights(genes: List[float]) -> List[Weight]:
+    """
+    Convert genes array to weights array.
+    Genes format: [position_1, mass_1, position_2, mass_2, ...]
+
+    Weights are symmetric about the bar center, so position represents
+    the distance from center (like lambda_ for cuts).
+
+    Args:
+        genes: Flat array of optimization variables
+
+    Returns:
+        Array of Weight objects
+    """
+    weights: List[Weight] = []
+    # Process pairs of genes (position, mass)
+    i = 0
+    while i + 1 < len(genes):
+        position = genes[i]
+        mass = genes[i + 1]
+        # Only add valid weights with positive mass
+        if isinstance(position, (int, float)) and isinstance(mass, (int, float)):
+            if not math.isnan(position) and not math.isnan(mass) and mass > 0:
+                weights.append(Weight(position=position, mass=mass))
+        i += 2
+
+    # Sort by position descending (outermost first, like cuts)
+    return sorted(weights, key=lambda w: w.position, reverse=True)
+
+
+def weights_to_genes(weights: List[Weight]) -> List[float]:
+    """
+    Convert weights array to genes array.
+    Weights are sorted by position (descending) before conversion.
+
+    Args:
+        weights: Array of Weight objects
+
+    Returns:
+        Flat array of genes [position_1, mass_1, position_2, mass_2, ...]
+    """
+    sorted_weights = sorted(weights, key=lambda w: w.position, reverse=True)
+    genes: List[float] = []
+    for weight in sorted_weights:
+        genes.extend([weight.position, weight.mass])
+    return genes
+
+
+def compute_element_added_masses(
+    weights: List[Weight],
+    L: float,
+    Ne: int
+) -> List[float]:
+    """
+    Compute the added mass for each finite element based on weights.
+
+    Weights are symmetric about the bar center, so each weight at position p
+    creates two point masses: one at (L/2 - p) and one at (L/2 + p).
+
+    The mass is distributed to elements containing the weight positions.
+
+    Args:
+        weights: Array of weights
+        L: Bar length (m)
+        Ne: Number of finite elements
+
+    Returns:
+        Array of added masses per element (length Ne), in kg
+    """
+    le = L / Ne  # Element length
+    added_masses: List[float] = [0.0] * Ne
+    center_x = L / 2
+
+    for weight in weights:
+        if weight.position <= 0 or weight.mass <= 0:
+            continue
+
+        # Calculate the two symmetric positions
+        left_pos = center_x - weight.position
+        right_pos = center_x + weight.position
+
+        # Distribute mass to the containing elements
+        for pos in [left_pos, right_pos]:
+            if pos < 0 or pos > L:
+                continue
+
+            # Find which element contains this position
+            element_idx = int(pos / le)
+            if element_idx >= Ne:
+                element_idx = Ne - 1
+
+            # Add the mass to this element
+            # Each symmetric position gets half the mass (total = full mass)
+            added_masses[element_idx] += weight.mass / 2
+
+    return added_masses
+
+
+def compute_nodal_added_masses(
+    weights: List[Weight],
+    L: float,
+    Ne: int
+) -> List[float]:
+    """
+    Compute the added mass for each node based on weights.
+
+    For FEM with Ne elements, there are Ne+1 nodes.
+    Mass is distributed to the two nearest nodes using linear interpolation.
+
+    Args:
+        weights: Array of weights
+        L: Bar length (m)
+        Ne: Number of finite elements
+
+    Returns:
+        Array of added masses per node (length Ne+1), in kg
+    """
+    le = L / Ne  # Element length
+    num_nodes = Ne + 1
+    nodal_masses: List[float] = [0.0] * num_nodes
+    center_x = L / 2
+
+    for weight in weights:
+        if weight.position <= 0 or weight.mass <= 0:
+            continue
+
+        # Calculate the two symmetric positions
+        left_pos = center_x - weight.position
+        right_pos = center_x + weight.position
+
+        # Distribute mass to nodes for each position
+        for pos in [left_pos, right_pos]:
+            if pos < 0 or pos > L:
+                continue
+
+            # Find the left node index and interpolation factor
+            left_node = int(pos / le)
+            if left_node >= Ne:
+                left_node = Ne - 1
+            right_node = left_node + 1
+
+            # Linear interpolation factor
+            local_pos = pos - left_node * le
+            alpha = local_pos / le  # 0 at left node, 1 at right node
+
+            # Distribute mass (each symmetric position gets half)
+            mass_contribution = weight.mass / 2
+            nodal_masses[left_node] += mass_contribution * (1 - alpha)
+            nodal_masses[right_node] += mass_contribution * alpha
+
+    return nodal_masses
+
+
+def validate_weights(weights: List[Weight], bar: BarParameters, max_mass: float) -> Tuple[bool, Optional[str]]:
+    """
+    Validate weights are within bounds.
+
+    Args:
+        weights: Array of weights
+        bar: Bar parameters
+        max_mass: Maximum allowed mass per weight (kg)
+
+    Returns:
+        Tuple of (valid, message)
+    """
+    for i, weight in enumerate(weights):
+        if weight.position < 0 or weight.position > bar.L / 2:
+            return (False, f"Weight {i + 1} position ({weight.position}) out of bounds [0, {bar.L / 2}]")
+
+        if weight.mass < 0 or weight.mass > max_mass:
+            return (False, f"Weight {i + 1} mass ({weight.mass}) out of bounds [0, {max_mass}]")
+
+    return (True, None)
+
+
+def total_added_mass(weights: List[Weight]) -> float:
+    """
+    Calculate total added mass from all weights.
+
+    Args:
+        weights: Array of weights
+
+    Returns:
+        Total mass in kg
+    """
+    return sum(w.mass for w in weights if w.mass > 0)

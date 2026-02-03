@@ -21,9 +21,15 @@ from ..types import (
     ProgressUpdate,
     BatchProgressState,
     AnalysisMode,
+    Weight,
 )
-from ..physics.frequencies import compute_frequencies_from_genes, batch_compute_fitness
-from ..physics.bar_profile import genes_to_cuts
+from ..physics.frequencies import (
+    compute_frequencies_from_genes,
+    batch_compute_fitness,
+    compute_frequencies_from_weight_genes,
+    batch_compute_fitness_weights,
+)
+from ..physics.bar_profile import genes_to_cuts, genes_to_weights, total_added_mass
 
 from .population import (
     create_bounds,
@@ -34,6 +40,14 @@ from .population import (
     clone_individual,
     get_length_adjust_from_genes,
     BoundsConstraints,
+    # Weight optimization support
+    WeightBounds,
+    create_weight_bounds,
+    create_no_weight_individual,
+    initialize_weight_population,
+    weight_mutation,
+    weight_crossover,
+    clamp_weight_genes,
 )
 from .selection import select_elite, select_mating_pairs
 from .crossover import heuristic_crossover
@@ -706,4 +720,318 @@ def get_default_ea_parameters(num_cuts: int) -> EAParameters:
         max_length_trim=0.0,
         max_length_extend=0.0,
         max_workers=0  # 0 = auto
+    )
+
+
+# ============================================================================
+# Weight Optimization (adding masses instead of cutting)
+# ============================================================================
+
+@dataclass
+class WeightOptConfig:
+    """Configuration for weight optimization."""
+    bar: BarParameters
+    material: Material
+    target_frequencies: List[float]
+    num_weights: int = 3
+    min_weight_mass: float = 0.0
+    max_weight_mass: float = 0.1
+    ea_params: Optional[EAParameters] = None
+    seed_genes: Optional[List[float]] = None
+    on_progress: Optional[Callable[[ProgressUpdate], None]] = None
+    should_stop: Optional[Callable[[], bool]] = None
+
+
+def _compute_frequencies_and_errors_weights(
+    genes: List[float],
+    bar: BarParameters,
+    material: Material,
+    target_frequencies: List[float],
+    num_elements: int,
+    num_weights: int,
+) -> dict:
+    """Compute frequencies and cents errors for a weight individual."""
+    try:
+        computed_frequencies = compute_frequencies_from_weight_genes(
+            genes,
+            bar,
+            material,
+            len(target_frequencies),
+            num_elements,
+            num_weights,
+        )
+
+        errors_in_cents = []
+        for i, comp in enumerate(computed_frequencies):
+            target = target_frequencies[i] if i < len(target_frequencies) else 0
+            if target and target > 0:
+                errors_in_cents.append(1200 * math.log2(comp / target))
+            else:
+                errors_in_cents.append(0.0)
+
+        return {
+            "computed_frequencies": computed_frequencies,
+            "errors_in_cents": errors_in_cents,
+        }
+    except Exception:
+        return {
+            "computed_frequencies": [],
+            "errors_in_cents": [],
+        }
+
+
+def _batch_evaluate_weight_population(
+    population: List[Individual],
+    bar: BarParameters,
+    material: Material,
+    target_frequencies: List[float],
+    num_elements: int,
+    f1_priority: float = 1.0,
+    num_weights: int = 3,
+    max_workers: int = 0,
+    on_batch_progress: Optional[Callable[[BatchProgressState], None]] = None,
+) -> List[Individual]:
+    """
+    Batch evaluate population fitness for weight optimization.
+    """
+    genes_array = [ind.genes for ind in population]
+    tuning_errors = batch_compute_fitness_weights(
+        genes_array,
+        bar,
+        material,
+        target_frequencies,
+        num_elements,
+        f1_priority,
+        num_weights,
+        max_workers,
+        on_batch_progress=on_batch_progress,
+        progress_interval=20,
+    )
+
+    result: List[Individual] = []
+    for i, ind in enumerate(population):
+        fitness = tuning_errors[i]
+        result.append(Individual(
+            genes=ind.genes.copy(),
+            fitness=fitness,
+            sigmas=ind.sigmas.copy() if ind.sigmas else None
+        ))
+
+    return result
+
+
+def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
+    """
+    Run evolutionary optimization for adding weights to a bar.
+
+    Unlike cut optimization which removes material, weight optimization
+    finds optimal positions and masses for adding weights to the bar.
+    This only affects the mass distribution, not the stiffness.
+
+    Args:
+        config: Weight optimization configuration
+
+    Returns:
+        Optimization result with weights instead of cuts
+    """
+    bar = config.bar
+    material = config.material
+    original_target_frequencies = config.target_frequencies
+    num_weights = config.num_weights
+    min_mass = config.min_weight_mass
+    max_mass = config.max_weight_mass
+    ea_params = config.ea_params or get_default_ea_parameters(num_weights)
+    seed_genes = config.seed_genes
+    on_progress = config.on_progress
+    should_stop = config.should_stop
+
+    # Apply frequency offset if specified
+    offset = ea_params.frequency_offset
+    target_frequencies = [f * (1 + offset) for f in original_target_frequencies]
+
+    # Create weight bounds
+    bounds = create_weight_bounds(bar, num_weights, min_mass, max_mass)
+
+    f1_priority = ea_params.f1_priority
+    max_workers = ea_params.max_workers
+
+    # Track current batch progress
+    current_batch_progress: List[Optional[BatchProgressState]] = [None]
+
+    def batch_progress_handler(bp: BatchProgressState) -> None:
+        current_batch_progress[0] = bp
+        if on_progress and best_ever_holder[0] is not None:
+            freq_data = _compute_frequencies_and_errors_weights(
+                best_ever_holder[0].genes, bar, material, target_frequencies,
+                ea_params.num_elements, num_weights
+            )
+            on_progress(ProgressUpdate(
+                generation=generation_holder[0],
+                best_fitness=best_ever_holder[0].fitness,
+                best_individual=clone_individual(best_ever_holder[0]),
+                average_fitness=best_ever_holder[0].fitness,
+                computed_frequencies=freq_data["computed_frequencies"],
+                errors_in_cents=freq_data["errors_in_cents"],
+                length_trim=0.0,
+                batch_progress=bp,
+            ))
+
+    # Holders for closure access
+    best_ever_holder: List[Optional[Individual]] = [None]
+    generation_holder: List[int] = [0]
+
+    # Report Generation 0: baseline bar (no weights)
+    if on_progress:
+        no_weight_bar = create_no_weight_individual(num_weights, bounds)
+        [evaluated_baseline] = _batch_evaluate_weight_population(
+            [no_weight_bar], bar, material, target_frequencies,
+            ea_params.num_elements, f1_priority, num_weights, max_workers
+        )
+        freq_data = _compute_frequencies_and_errors_weights(
+            evaluated_baseline.genes, bar, material, target_frequencies,
+            ea_params.num_elements, num_weights
+        )
+        on_progress(ProgressUpdate(
+            generation=0,
+            best_fitness=evaluated_baseline.fitness,
+            best_individual=evaluated_baseline,
+            average_fitness=evaluated_baseline.fitness,
+            computed_frequencies=freq_data["computed_frequencies"],
+            errors_in_cents=freq_data["errors_in_cents"],
+            length_trim=0.0
+        ))
+
+    # Initialize population
+    population = initialize_weight_population(ea_params.population_size, num_weights, bounds, seed_genes)
+
+    # Evaluate initial population
+    population = _batch_evaluate_weight_population(
+        population, bar, material, target_frequencies,
+        ea_params.num_elements, f1_priority, num_weights, max_workers
+    )
+
+    # Calculate percentages for operations
+    num_elite = max(1, int(ea_params.population_size * ea_params.elitism_percent / 100))
+    num_crossover = int(ea_params.population_size * ea_params.crossover_percent / 100)
+    num_crossover_pairs = (num_crossover + 1) // 2
+
+    best_ever = get_best_individual(population)
+    best_ever_holder[0] = best_ever
+    generation = 0
+    generation_holder[0] = generation
+
+    # Main evolution loop
+    while generation < ea_params.max_generations:
+        if should_stop and should_stop():
+            break
+
+        if best_ever.fitness <= ea_params.target_error:
+            break
+
+        next_generation: List[Individual] = []
+
+        # 1. Elitism
+        elite = select_elite(population, num_elite)
+        next_generation.extend(elite)
+
+        # 2. Crossover
+        new_offspring: List[Individual] = []
+        if num_crossover > 0:
+            mating_pairs = select_mating_pairs(population, num_crossover_pairs, 'roulette')
+
+            for parent1, parent2 in mating_pairs:
+                child1, child2 = weight_crossover(parent1, parent2, bounds, num_weights)
+                new_offspring.append(child1)
+                if len(next_generation) + len(new_offspring) < ea_params.population_size:
+                    new_offspring.append(child2)
+
+        # 3. Mutation
+        sorted_pop = sorted(population, key=lambda ind: ind.fitness)
+        while len(next_generation) + len(new_offspring) < ea_params.population_size:
+            idx = int(len(sorted_pop) * min(0.5, (num_elite + num_crossover) / ea_params.population_size) *
+                     (1 + 0.5 * (1 - len(next_generation) / ea_params.population_size)))
+            idx = min(idx, len(sorted_pop) - 1)
+            parent = sorted_pop[idx]
+
+            mutant = weight_mutation(parent, ea_params.mutation_strength, bounds, num_weights)
+            new_offspring.append(mutant)
+
+        # Evaluate offspring
+        if new_offspring:
+            evaluated_offspring = _batch_evaluate_weight_population(
+                new_offspring, bar, material, target_frequencies,
+                ea_params.num_elements, f1_priority, num_weights, max_workers
+            )
+            next_generation.extend(evaluated_offspring)
+
+        population = next_generation
+
+        current_best = get_best_individual(population)
+        if current_best.fitness < best_ever.fitness:
+            best_ever = clone_individual(current_best)
+            best_ever_holder[0] = best_ever
+
+        generation += 1
+        generation_holder[0] = generation
+
+        if on_progress:
+            stats = calculate_population_stats(population)
+            freq_data = _compute_frequencies_and_errors_weights(
+                best_ever.genes, bar, material, target_frequencies,
+                ea_params.num_elements, num_weights
+            )
+            on_progress(ProgressUpdate(
+                generation=generation,
+                best_fitness=best_ever.fitness,
+                best_individual=clone_individual(best_ever),
+                average_fitness=stats.average_fitness,
+                computed_frequencies=freq_data["computed_frequencies"],
+                errors_in_cents=freq_data["errors_in_cents"],
+                length_trim=0.0
+            ))
+
+    # Get final results
+    weight_genes = best_ever.genes[:num_weights * 2]
+    weights = genes_to_weights(weight_genes)
+
+    # Final evaluation against original targets
+    final_freq_data = _compute_frequencies_and_errors_weights(
+        best_ever.genes, bar, material, original_target_frequencies,
+        ea_params.num_elements, num_weights
+    )
+
+    # Compute tuning error
+    computed_freqs = final_freq_data["computed_frequencies"]
+    errors_cents = final_freq_data["errors_in_cents"]
+
+    if computed_freqs and original_target_frequencies:
+        weighted_sq_sum = 0.0
+        total_weight = 0.0
+        for m in range(len(original_target_frequencies)):
+            if m < len(computed_freqs):
+                weight = f1_priority if m == 0 else 1.0
+                rel_error = (computed_freqs[m] - original_target_frequencies[m]) / original_target_frequencies[m]
+                weighted_sq_sum += weight * rel_error * rel_error
+                total_weight += weight
+        tuning_error = 100.0 * weighted_sq_sum / total_weight if total_weight > 0 else float('inf')
+    else:
+        tuning_error = float('inf')
+
+    max_error_cents = max(abs(e) for e in errors_cents) if errors_cents else 0.0
+
+    return OptimizationResult(
+        best_individual=best_ever,
+        cuts=[],  # No cuts in weight optimization
+        computed_frequencies=computed_freqs,
+        target_frequencies=original_target_frequencies,
+        tuning_error=tuning_error,
+        max_error_cents=max_error_cents,
+        errors_in_cents=errors_cents,
+        volume_percent=0.0,  # No volume removed
+        roughness_percent=0.0,  # Not applicable
+        generations=generation,
+        length_trim=0.0,
+        effective_length=bar.L,
+        weights=weights,
+        total_added_mass=total_added_mass(weights),
     )

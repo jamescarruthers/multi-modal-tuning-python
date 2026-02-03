@@ -11,9 +11,13 @@ import math
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import os
 
-from ..types import BarParameters, Material, AnalysisMode, BatchProgressState
-from .bar_profile import genes_to_cuts
-from .fem_assembly import assemble_global_matrices, solve_generalized_eigenvalue
+from ..types import BarParameters, Material, AnalysisMode, BatchProgressState, Weight
+from .bar_profile import genes_to_cuts, genes_to_weights, compute_nodal_added_masses
+from .fem_assembly import (
+    assemble_global_matrices,
+    solve_generalized_eigenvalue,
+    assemble_global_matrices_with_weights,
+)
 from .fem_3d import (
     compute_frequencies_3d,
     get_bending_frequencies_3d,
@@ -417,6 +421,247 @@ def batch_compute_fitness(
             completed_count += 1
 
             # Report progress periodically
+            if on_batch_progress and (completed_count % progress_interval == 0 or completed_count == total):
+                progress = BatchProgressState(
+                    completed=completed_count,
+                    total=total,
+                    best_fitness_so_far=best_fitness_so_far if best_fitness_so_far < float('inf') else None,
+                    message=f"Evaluating: {completed_count}/{total}"
+                )
+                on_batch_progress(progress)
+
+    return fitness_values
+
+
+# ============================================================================
+# Weight-based frequency computation (adding masses instead of cutting)
+# ============================================================================
+
+def compute_frequencies_with_weights(
+    element_heights: List[float],
+    nodal_masses: List[float],
+    le: float,
+    b: float,
+    E: float,
+    rho: float,
+    nu: float,
+    num_modes: int,
+) -> List[float]:
+    """
+    Compute natural frequencies for a bar with added point masses (weights).
+
+    Unlike cuts which modify both stiffness and mass, weights only add to
+    the mass matrix while keeping the bar geometry (and stiffness) unchanged.
+
+    Args:
+        element_heights: Height of each finite element (m) - typically uniform h0
+        nodal_masses: Added mass at each node (kg), length = num_elements + 1
+        le: Length of each element (m)
+        b: Bar width (m)
+        E: Young's modulus (Pa)
+        rho: Density (kg/m^3)
+        nu: Poisson's ratio
+        num_modes: Number of modes to extract
+
+    Returns:
+        List of natural frequencies in Hz
+    """
+    # Assemble matrices with added nodal masses
+    K, M = assemble_global_matrices_with_weights(
+        element_heights, le, b, E, rho, nu, nodal_masses
+    )
+    return solve_generalized_eigenvalue(K, M, num_modes)
+
+
+def compute_frequencies_from_weight_genes(
+    genes: List[float],
+    bar: BarParameters,
+    material: Material,
+    num_modes: int,
+    num_elements: int,
+    num_weights: int = 3,
+) -> List[float]:
+    """
+    Compute frequencies directly from weight parameters (genes).
+
+    For weight optimization, the bar geometry stays constant (no cuts),
+    and weights are added at symmetric positions.
+
+    Args:
+        genes: Flat array [position_1, mass_1, position_2, mass_2, ...]
+        bar: Bar parameters
+        material: Material properties
+        num_modes: Number of modes to extract
+        num_elements: Number of finite elements
+        num_weights: Number of weights (for parsing genes)
+
+    Returns:
+        List of natural frequencies in Hz
+    """
+    # Parse genes into weights
+    weight_genes = genes[:num_weights * 2] if num_weights > 0 else []
+    weights = genes_to_weights(weight_genes)
+
+    # Generate uniform element heights (no cuts)
+    element_heights: List[float] = [bar.h0] * num_elements
+
+    # Compute nodal masses from weights
+    le = bar.L / num_elements
+    nodal_masses = compute_nodal_added_masses(weights, bar.L, num_elements)
+
+    return compute_frequencies_with_weights(
+        element_heights,
+        nodal_masses,
+        le,
+        bar.b,
+        material.E,
+        material.rho,
+        material.nu,
+        num_modes,
+    )
+
+
+def _compute_single_fitness_weights(
+    genes: List[float],
+    bar_length: float,
+    bar_width: float,
+    h0: float,
+    num_elements: int,
+    E: float,
+    rho: float,
+    nu: float,
+    target_frequencies: List[float],
+    f1_priority: float,
+    num_weights: int,
+) -> float:
+    """
+    Compute fitness for a single individual with weight genes.
+    Internal function used by batch_compute_fitness_weights.
+    """
+    # Parse genes into weights
+    weight_genes = genes[:num_weights * 2] if num_weights > 0 else []
+    weights = genes_to_weights(weight_genes)
+
+    # Generate uniform element heights (no cuts)
+    element_heights: List[float] = [h0] * num_elements
+
+    # Compute nodal masses from weights
+    le = bar_length / num_elements
+    nodal_masses = compute_nodal_added_masses(weights, bar_length, num_elements)
+
+    # Compute frequencies
+    try:
+        frequencies = compute_frequencies_with_weights(
+            element_heights,
+            nodal_masses,
+            le,
+            bar_width,
+            E,
+            rho,
+            nu,
+            len(target_frequencies),
+        )
+    except Exception:
+        return float('inf')
+
+    # Compute weighted tuning error
+    num_modes = len(target_frequencies)
+    if len(frequencies) < num_modes:
+        return float('inf')
+
+    weighted_sum_sq_error = 0.0
+    total_weight = 0.0
+    for m in range(num_modes):
+        weight = f1_priority if m == 0 else 1.0
+        rel_error = (frequencies[m] - target_frequencies[m]) / target_frequencies[m]
+        weighted_sum_sq_error += weight * rel_error * rel_error
+        total_weight += weight
+
+    if total_weight > 0:
+        return 100.0 * weighted_sum_sq_error / total_weight
+    else:
+        return float('inf')
+
+
+def batch_compute_fitness_weights(
+    genes_array: List[List[float]],
+    bar: BarParameters,
+    material: Material,
+    target_frequencies: List[float],
+    num_elements: int,
+    f1_priority: float = 1.0,
+    num_weights: int = 3,
+    max_workers: int = 0,
+    parallel_mode: Literal['threading', 'multiprocessing', 'auto'] = 'auto',
+    on_batch_progress: Optional[Callable[[BatchProgressState], None]] = None,
+    progress_interval: int = 10,
+) -> List[float]:
+    """
+    Batch compute fitness for weight optimization using parallel execution.
+
+    Args:
+        genes_array: List of gene arrays, one per individual
+        bar: Bar parameters
+        material: Material properties
+        target_frequencies: Target frequencies (Hz)
+        num_elements: Number of FEM elements
+        f1_priority: Weight multiplier for f1 (>1 prioritizes f1)
+        num_weights: Number of weights per individual
+        max_workers: Maximum number of workers (0 = auto)
+        parallel_mode: 'threading', 'multiprocessing', or 'auto'
+        on_batch_progress: Optional callback for batch progress updates
+        progress_interval: How often to report progress
+
+    Returns:
+        List of fitness values for each individual
+    """
+    if max_workers <= 0:
+        max_workers = min(os.cpu_count() or 4, len(genes_array))
+
+    if parallel_mode == 'auto':
+        parallel_mode = 'threading'
+
+    if parallel_mode == 'multiprocessing':
+        Executor = ProcessPoolExecutor
+    else:
+        Executor = ThreadPoolExecutor
+
+    fitness_values = [float('inf')] * len(genes_array)
+    total = len(genes_array)
+    completed_count = 0
+    best_fitness_so_far = float('inf')
+
+    with Executor(max_workers=max_workers) as executor:
+        future_to_idx = {
+            executor.submit(
+                _compute_single_fitness_weights,
+                genes,
+                bar.L,
+                bar.b,
+                bar.h0,
+                num_elements,
+                material.E,
+                material.rho,
+                material.nu,
+                target_frequencies,
+                f1_priority,
+                num_weights,
+            ): idx
+            for idx, genes in enumerate(genes_array)
+        }
+
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                fitness = future.result()
+                fitness_values[idx] = fitness
+                if fitness < best_fitness_so_far:
+                    best_fitness_so_far = fitness
+            except Exception:
+                fitness_values[idx] = float('inf')
+
+            completed_count += 1
+
             if on_batch_progress and (completed_count % progress_interval == 0 or completed_count == total):
                 progress = BatchProgressState(
                     completed=completed_count,

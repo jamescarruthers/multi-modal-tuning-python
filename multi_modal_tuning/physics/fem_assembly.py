@@ -5,7 +5,7 @@ Implements global matrix assembly from element matrices and
 generalized eigenvalue solving for natural frequencies.
 """
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 import numpy as np
 from scipy import linalg
 import math
@@ -60,6 +60,74 @@ def assemble_global_matrices(
                 gj = dof_map[j]
                 K_global[gi, gj] += Ke[i, j]
                 M_global[gi, gj] += Me[i, j]
+
+    return K_global, M_global
+
+
+def add_nodal_masses(
+    M: np.ndarray,
+    nodal_masses: List[float]
+) -> np.ndarray:
+    """
+    Add point masses to the global mass matrix at specific nodes.
+
+    For a Timoshenko beam, each node has 2 DOFs: [w, θ] (displacement, rotation).
+    Added point masses only affect the translational DOF (w), not the rotational DOF (θ).
+
+    Args:
+        M: Global mass matrix (will be modified in place)
+        nodal_masses: Mass to add at each node (kg), length = num_nodes
+
+    Returns:
+        Modified mass matrix
+    """
+    num_nodes = len(nodal_masses)
+
+    for node_idx in range(num_nodes):
+        if nodal_masses[node_idx] > 0:
+            # DOF index for translational DOF at this node
+            # Node i has DOFs [2*i, 2*i+1] = [w_i, θ_i]
+            dof_w = 2 * node_idx
+            M[dof_w, dof_w] += nodal_masses[node_idx]
+
+    return M
+
+
+def assemble_global_matrices_with_weights(
+    element_heights: List[float],
+    le: float,
+    b: float,
+    E: float,
+    rho: float,
+    nu: float,
+    nodal_masses: Optional[List[float]] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Assemble global stiffness and mass matrices with optional added point masses.
+
+    This is the same as assemble_global_matrices but adds support for
+    weight optimization where point masses are added to nodes.
+
+    Args:
+        element_heights: Height of each element (m)
+        le: Element length (m)
+        b: Bar width (m)
+        E: Young's modulus (Pa)
+        rho: Density (kg/m^3)
+        nu: Poisson's ratio
+        nodal_masses: Optional array of added masses at each node (kg)
+
+    Returns:
+        Tuple of (K_global, M_global) matrices
+    """
+    # First assemble the standard matrices
+    K_global, M_global = assemble_global_matrices(
+        element_heights, le, b, E, rho, nu
+    )
+
+    # Add nodal masses if provided
+    if nodal_masses is not None and len(nodal_masses) > 0:
+        M_global = add_nodal_masses(M_global, nodal_masses)
 
     return K_global, M_global
 

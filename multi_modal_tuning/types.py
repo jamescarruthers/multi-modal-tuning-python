@@ -43,6 +43,13 @@ class Cut:
 
 
 @dataclass
+class Weight:
+    """Single point weight attached to the bar."""
+    position: float  # Distance from center (m), symmetric like cuts
+    mass: float      # Mass to add (kg)
+
+
+@dataclass
 class TuningPreset:
     """
     Tuning preset with frequency ratios for bending and optionally torsional modes.
@@ -103,6 +110,12 @@ class EAParameters:
     flexible_torsional: bool = False
     # Optimization algorithm: 'evolutionary' or 'surrogate'
     optimizer: Literal['evolutionary', 'surrogate'] = 'evolutionary'
+    # Modification mode: 'cuts' (remove material) or 'weights' (add point masses)
+    modification_mode: Literal['cuts', 'weights'] = 'cuts'
+    # Weight-specific parameters (only used when modification_mode is 'weights')
+    num_weights: int = 3              # Number of weight positions
+    min_weight_mass: float = 0.0      # Minimum mass per weight (kg)
+    max_weight_mass: float = 0.1      # Maximum mass per weight (kg)
     # Surrogate optimization parameters
     surrogate_max_evals: int = 500    # Max function evaluations for surrogate
     surrogate_initial_points: int = 20  # Initial random sampling points
@@ -135,6 +148,9 @@ class OptimizationResult:
     generations: int
     length_trim: float = 0.0          # How much trimmed from each end (m)
     effective_length: float = 0.0     # L - 2*length_trim (m)
+    # Weight optimization results (when modification_mode is 'weights')
+    weights: Optional[List['Weight']] = None
+    total_added_mass: float = 0.0     # Total mass added (kg)
     # Torsional mode results (Soares et al. 2021)
     torsional_frequencies: Optional[List[float]] = None
     target_torsional_frequencies: Optional[List[float]] = None

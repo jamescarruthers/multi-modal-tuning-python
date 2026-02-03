@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import random
 import math
 
-from ..types import Individual, VariableBounds, BarParameters
+from ..types import Individual, VariableBounds, BarParameters, Weight
 
 
 @dataclass
@@ -370,3 +370,237 @@ def calculate_diversity(population: List[Individual]) -> float:
         total_variance += variance
 
     return math.sqrt(total_variance / num_genes)
+
+
+# ============================================================================
+# Weight optimization support (adding masses instead of cutting)
+# ============================================================================
+
+@dataclass
+class WeightBounds:
+    """Bounds for weight optimization variables."""
+    position_min: float  # Minimum position from center (m)
+    position_max: float  # Maximum position from center (m), typically L/2
+    mass_min: float      # Minimum mass (kg)
+    mass_max: float      # Maximum mass (kg)
+
+
+def create_weight_bounds(
+    bar: BarParameters,
+    num_weights: int,
+    min_mass: float = 0.0,
+    max_mass: float = 0.1,
+) -> WeightBounds:
+    """
+    Create bounds for weight optimization variables.
+
+    Args:
+        bar: Bar parameters
+        num_weights: Number of weights
+        min_mass: Minimum mass per weight (kg)
+        max_mass: Maximum mass per weight (kg)
+
+    Returns:
+        Weight bounds
+    """
+    return WeightBounds(
+        position_min=0.0,
+        position_max=bar.L / 2,
+        mass_min=min_mass,
+        mass_max=max_mass,
+    )
+
+
+def create_no_weight_individual(num_weights: int, bounds: WeightBounds) -> Individual:
+    """
+    Create a "no weight" individual - baseline with no added masses.
+    All positions = 0, all masses = 0.
+
+    Args:
+        num_weights: Number of weights (determines gene array size)
+        bounds: Weight bounds
+
+    Returns:
+        Individual representing a bar with no added weights
+    """
+    genes: List[float] = []
+
+    # All weights have position=0 and mass=0 (no weight added)
+    for _ in range(num_weights):
+        genes.append(0.0)   # position = 0
+        genes.append(0.0)   # mass = 0
+
+    return Individual(genes=genes, fitness=float('inf'))
+
+
+def create_random_weight_individual(num_weights: int, bounds: WeightBounds) -> Individual:
+    """
+    Create a random individual with weight genes.
+
+    Args:
+        num_weights: Number of weights (2 genes per weight: position, mass)
+        bounds: Weight bounds
+
+    Returns:
+        New individual with random genes
+    """
+    genes: List[float] = []
+
+    for _ in range(num_weights):
+        # Random position from center
+        position = bounds.position_min + random.random() * (bounds.position_max - bounds.position_min)
+        genes.append(position)
+
+        # Random mass
+        mass = bounds.mass_min + random.random() * (bounds.mass_max - bounds.mass_min)
+        genes.append(mass)
+
+    return Individual(genes=genes, fitness=float('inf'))
+
+
+def initialize_weight_population(
+    population_size: int,
+    num_weights: int,
+    bounds: WeightBounds,
+    seed_genes: Optional[List[float]] = None
+) -> List[Individual]:
+    """
+    Initialize a population for weight optimization.
+
+    Args:
+        population_size: Number of individuals
+        num_weights: Number of weights per individual
+        bounds: Weight bounds
+        seed_genes: Optional seed genes
+
+    Returns:
+        Array of individuals
+    """
+    population: List[Individual] = []
+
+    # If seed genes provided, create an individual from them
+    if seed_genes and len(seed_genes) > 0:
+        clamped_genes = clamp_weight_genes(seed_genes, bounds, num_weights)
+        population.append(Individual(genes=clamped_genes, fitness=float('inf')))
+
+        # Also add some mutated variants for diversity
+        num_variants = min(int(population_size * 0.2), 10)
+        for _ in range(num_variants):
+            if len(population) >= population_size:
+                break
+            variant_genes = [g * (0.95 + random.random() * 0.1) for g in clamped_genes]
+            population.append(Individual(
+                genes=clamp_weight_genes(variant_genes, bounds, num_weights),
+                fitness=float('inf')
+            ))
+
+    # Fill remaining slots with random individuals
+    while len(population) < population_size:
+        population.append(create_random_weight_individual(num_weights, bounds))
+
+    return population
+
+
+def clamp_weight_genes(genes: List[float], bounds: WeightBounds, num_weights: int) -> List[float]:
+    """
+    Clamp weight genes to bounds.
+
+    Args:
+        genes: Gene array [position_1, mass_1, position_2, mass_2, ...]
+        bounds: Weight bounds
+        num_weights: Number of weights
+
+    Returns:
+        Clamped genes
+    """
+    clamped = genes.copy()
+    weight_genes_length = num_weights * 2
+
+    for i in range(0, min(len(clamped), weight_genes_length), 2):
+        # Clamp position
+        clamped[i] = max(bounds.position_min, min(bounds.position_max, clamped[i]))
+        # Clamp mass
+        if i + 1 < len(clamped):
+            clamped[i + 1] = max(bounds.mass_min, min(bounds.mass_max, clamped[i + 1]))
+
+    return clamped
+
+
+def weight_mutation(
+    individual: Individual,
+    sigma: float,
+    bounds: WeightBounds,
+    num_weights: int
+) -> Individual:
+    """
+    Mutate an individual with weight genes using uniform mutation.
+
+    Args:
+        individual: Parent individual
+        sigma: Mutation strength (0-1)
+        bounds: Weight bounds
+        num_weights: Number of weights
+
+    Returns:
+        Mutated individual
+    """
+    genes = individual.genes.copy()
+    num_genes = num_weights * 2
+
+    # Mutate random genes
+    num_mutate = random.randint(1, max(1, num_genes))
+    indices_to_mutate = set(random.sample(range(min(len(genes), num_genes)), num_mutate))
+
+    for idx in indices_to_mutate:
+        is_position = idx % 2 == 0
+
+        if is_position:
+            range_val = bounds.position_max - bounds.position_min
+            r = random.random() * 2 - 1
+            genes[idx] += sigma * range_val * r
+            genes[idx] = max(bounds.position_min, min(bounds.position_max, genes[idx]))
+        else:
+            range_val = bounds.mass_max - bounds.mass_min
+            r = random.random() * 2 - 1
+            genes[idx] += sigma * range_val * r
+            genes[idx] = max(bounds.mass_min, min(bounds.mass_max, genes[idx]))
+
+    return Individual(genes=genes, fitness=float('inf'))
+
+
+def weight_crossover(
+    parent1: Individual,
+    parent2: Individual,
+    bounds: WeightBounds,
+    num_weights: int
+) -> tuple:
+    """
+    Perform heuristic crossover for weight individuals.
+
+    Args:
+        parent1: First parent
+        parent2: Second parent
+        bounds: Weight bounds
+        num_weights: Number of weights
+
+    Returns:
+        Tuple of two children
+    """
+    r = random.random()
+
+    child1_genes = []
+    child2_genes = []
+
+    for i in range(len(parent1.genes)):
+        c1 = parent1.genes[i] + r * (parent2.genes[i] - parent1.genes[i])
+        c2 = parent2.genes[i] + r * (parent1.genes[i] - parent2.genes[i])
+        child1_genes.append(c1)
+        child2_genes.append(c2)
+
+    child1_genes = clamp_weight_genes(child1_genes, bounds, num_weights)
+    child2_genes = clamp_weight_genes(child2_genes, bounds, num_weights)
+
+    return (
+        Individual(genes=child1_genes, fitness=float('inf')),
+        Individual(genes=child2_genes, fitness=float('inf'))
+    )

@@ -14,6 +14,7 @@ from .types import (
     Material,
     BarParameters,
     Cut,
+    Weight,
     TuningPreset,
     EAParameters,
     Individual,
@@ -43,6 +44,8 @@ from .optimization.algorithm import (
     run_adaptive_evolution,
     get_default_ea_parameters,
     EAConfig,
+    run_weight_optimization,
+    WeightOptConfig,
 )
 
 from .optimization.surrogate import (
@@ -80,8 +83,16 @@ from .visualization.bar_diagrams import (
     generate_bar_diagrams,
 )
 
-from .physics.frequencies import compute_frequencies_from_genes
-from .physics.bar_profile import genes_to_cuts, generate_profile_points
+from .physics.frequencies import (
+    compute_frequencies_from_genes,
+    compute_frequencies_from_weight_genes,
+)
+from .physics.bar_profile import (
+    genes_to_cuts,
+    genes_to_weights,
+    generate_profile_points,
+    total_added_mass,
+)
 
 __version__ = "1.0.0"
 __all__ = [
@@ -89,6 +100,7 @@ __all__ = [
     "Material",
     "BarParameters",
     "Cut",
+    "Weight",
     "TuningPreset",
     "EAParameters",
     "Individual",
@@ -117,6 +129,9 @@ __all__ = [
     "run_adaptive_evolution",
     "get_default_ea_parameters",
     "EAConfig",
+    # Weight optimization
+    "run_weight_optimization",
+    "WeightOptConfig",
     # Surrogate optimization
     "run_surrogate_optimization",
     "SurrogateConfig",
@@ -144,6 +159,9 @@ __all__ = [
     "generate_bar_diagrams",
     # Physics
     "compute_frequencies_from_genes",
+    "compute_frequencies_from_weight_genes",
     "genes_to_cuts",
+    "genes_to_weights",
     "generate_profile_points",
+    "total_added_mass",
 ]

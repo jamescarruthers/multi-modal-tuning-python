@@ -65,6 +65,18 @@ from .algorithm import (
     run_adaptive_evolution,
     get_default_ea_parameters,
     EAConfig,
+    # Weight optimization
+    run_weight_optimization,
+    WeightOptConfig,
+)
+
+from .population import (
+    WeightBounds,
+    create_weight_bounds,
+    create_no_weight_individual,
+    initialize_weight_population,
+    weight_mutation,
+    weight_crossover,
 )
 
 from .surrogate import (
@@ -126,6 +138,15 @@ __all__ = [
     "run_adaptive_evolution",
     "get_default_ea_parameters",
     "EAConfig",
+    # Weight optimization
+    "run_weight_optimization",
+    "WeightOptConfig",
+    "WeightBounds",
+    "create_weight_bounds",
+    "create_no_weight_individual",
+    "initialize_weight_population",
+    "weight_mutation",
+    "weight_crossover",
     # Surrogate
     "run_surrogate_optimization",
     "SurrogateConfig",
