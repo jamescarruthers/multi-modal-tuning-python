@@ -736,6 +736,8 @@ class WeightOptConfig:
     num_weights: int = 3
     min_weight_mass: float = 0.0
     max_weight_mass: float = 0.1
+    # Length adjustment (trim bar from both ends)
+    max_length_trim: float = 0.0      # Max trim from each end (m), 0 = no trimming
     ea_params: Optional[EAParameters] = None
     seed_genes: Optional[List[float]] = None
     on_progress: Optional[Callable[[ProgressUpdate], None]] = None
@@ -749,9 +751,16 @@ def _compute_frequencies_and_errors_weights(
     target_frequencies: List[float],
     num_elements: int,
     num_weights: int,
+    has_length_adjust: bool = False,
 ) -> dict:
     """Compute frequencies and cents errors for a weight individual."""
     try:
+        # Extract length trim if present
+        length_trim = 0.0
+        weight_genes_count = num_weights * 2
+        if has_length_adjust and len(genes) > weight_genes_count:
+            length_trim = genes[weight_genes_count]
+
         computed_frequencies = compute_frequencies_from_weight_genes(
             genes,
             bar,
@@ -759,6 +768,7 @@ def _compute_frequencies_and_errors_weights(
             len(target_frequencies),
             num_elements,
             num_weights,
+            has_length_adjust,
         )
 
         errors_in_cents = []
@@ -772,11 +782,13 @@ def _compute_frequencies_and_errors_weights(
         return {
             "computed_frequencies": computed_frequencies,
             "errors_in_cents": errors_in_cents,
+            "length_trim": length_trim,
         }
     except Exception:
         return {
             "computed_frequencies": [],
             "errors_in_cents": [],
+            "length_trim": 0.0,
         }
 
 
@@ -790,6 +802,7 @@ def _batch_evaluate_weight_population(
     num_weights: int = 3,
     max_workers: int = 0,
     on_batch_progress: Optional[Callable[[BatchProgressState], None]] = None,
+    has_length_adjust: bool = False,
 ) -> List[Individual]:
     """
     Batch evaluate population fitness for weight optimization.
@@ -806,6 +819,7 @@ def _batch_evaluate_weight_population(
         max_workers,
         on_batch_progress=on_batch_progress,
         progress_interval=20,
+        has_length_adjust=has_length_adjust,
     )
 
     result: List[Individual] = []
@@ -828,6 +842,8 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
     finds optimal positions and masses for adding weights to the bar.
     This only affects the mass distribution, not the stiffness.
 
+    Optionally also optimizes bar length (trimming from both ends).
+
     Args:
         config: Weight optimization configuration
 
@@ -840,6 +856,7 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
     num_weights = config.num_weights
     min_mass = config.min_weight_mass
     max_mass = config.max_weight_mass
+    max_length_trim = config.max_length_trim
     ea_params = config.ea_params or get_default_ea_parameters(num_weights)
     seed_genes = config.seed_genes
     on_progress = config.on_progress
@@ -849,8 +866,9 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
     offset = ea_params.frequency_offset
     target_frequencies = [f * (1 + offset) for f in original_target_frequencies]
 
-    # Create weight bounds
-    bounds = create_weight_bounds(bar, num_weights, min_mass, max_mass)
+    # Create weight bounds (with optional length adjustment)
+    has_length_adjust = max_length_trim > 0
+    bounds = create_weight_bounds(bar, num_weights, min_mass, max_mass, max_length_trim)
 
     f1_priority = ea_params.f1_priority
     max_workers = ea_params.max_workers
@@ -863,7 +881,7 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
         if on_progress and best_ever_holder[0] is not None:
             freq_data = _compute_frequencies_and_errors_weights(
                 best_ever_holder[0].genes, bar, material, target_frequencies,
-                ea_params.num_elements, num_weights
+                ea_params.num_elements, num_weights, has_length_adjust
             )
             on_progress(ProgressUpdate(
                 generation=generation_holder[0],
@@ -872,7 +890,7 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
                 average_fitness=best_ever_holder[0].fitness,
                 computed_frequencies=freq_data["computed_frequencies"],
                 errors_in_cents=freq_data["errors_in_cents"],
-                length_trim=0.0,
+                length_trim=freq_data.get("length_trim", 0.0),
                 batch_progress=bp,
             ))
 
@@ -885,11 +903,12 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
         no_weight_bar = create_no_weight_individual(num_weights, bounds)
         [evaluated_baseline] = _batch_evaluate_weight_population(
             [no_weight_bar], bar, material, target_frequencies,
-            ea_params.num_elements, f1_priority, num_weights, max_workers
+            ea_params.num_elements, f1_priority, num_weights, max_workers,
+            has_length_adjust=has_length_adjust
         )
         freq_data = _compute_frequencies_and_errors_weights(
             evaluated_baseline.genes, bar, material, target_frequencies,
-            ea_params.num_elements, num_weights
+            ea_params.num_elements, num_weights, has_length_adjust
         )
         on_progress(ProgressUpdate(
             generation=0,
@@ -898,7 +917,7 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
             average_fitness=evaluated_baseline.fitness,
             computed_frequencies=freq_data["computed_frequencies"],
             errors_in_cents=freq_data["errors_in_cents"],
-            length_trim=0.0
+            length_trim=freq_data.get("length_trim", 0.0)
         ))
 
     # Initialize population
@@ -907,7 +926,8 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
     # Evaluate initial population
     population = _batch_evaluate_weight_population(
         population, bar, material, target_frequencies,
-        ea_params.num_elements, f1_priority, num_weights, max_workers
+        ea_params.num_elements, f1_priority, num_weights, max_workers,
+        has_length_adjust=has_length_adjust
     )
 
     # Calculate percentages for operations
@@ -960,7 +980,8 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
         if new_offspring:
             evaluated_offspring = _batch_evaluate_weight_population(
                 new_offspring, bar, material, target_frequencies,
-                ea_params.num_elements, f1_priority, num_weights, max_workers
+                ea_params.num_elements, f1_priority, num_weights, max_workers,
+                has_length_adjust=has_length_adjust
             )
             next_generation.extend(evaluated_offspring)
 
@@ -978,7 +999,7 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
             stats = calculate_population_stats(population)
             freq_data = _compute_frequencies_and_errors_weights(
                 best_ever.genes, bar, material, target_frequencies,
-                ea_params.num_elements, num_weights
+                ea_params.num_elements, num_weights, has_length_adjust
             )
             on_progress(ProgressUpdate(
                 generation=generation,
@@ -987,17 +1008,23 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
                 average_fitness=stats.average_fitness,
                 computed_frequencies=freq_data["computed_frequencies"],
                 errors_in_cents=freq_data["errors_in_cents"],
-                length_trim=0.0
+                length_trim=freq_data.get("length_trim", 0.0)
             ))
 
     # Get final results
     weight_genes = best_ever.genes[:num_weights * 2]
     weights = genes_to_weights(weight_genes)
 
+    # Extract length trim if present
+    length_trim = 0.0
+    if has_length_adjust and len(best_ever.genes) > num_weights * 2:
+        length_trim = best_ever.genes[num_weights * 2]
+    effective_length = bar.L - 2 * length_trim
+
     # Final evaluation against original targets
     final_freq_data = _compute_frequencies_and_errors_weights(
         best_ever.genes, bar, material, original_target_frequencies,
-        ea_params.num_elements, num_weights
+        ea_params.num_elements, num_weights, has_length_adjust
     )
 
     # Compute tuning error
@@ -1030,8 +1057,8 @@ def run_weight_optimization(config: WeightOptConfig) -> OptimizationResult:
         volume_percent=0.0,  # No volume removed
         roughness_percent=0.0,  # Not applicable
         generations=generation,
-        length_trim=0.0,
-        effective_length=bar.L,
+        length_trim=length_trim,
+        effective_length=effective_length,
         weights=weights,
         total_added_mass=total_added_mass(weights),
     )

@@ -480,6 +480,7 @@ def compute_frequencies_from_weight_genes(
     num_modes: int,
     num_elements: int,
     num_weights: int = 3,
+    has_length_adjust: bool = False,
 ) -> List[float]:
     """
     Compute frequencies directly from weight parameters (genes).
@@ -488,26 +489,34 @@ def compute_frequencies_from_weight_genes(
     and weights are added at symmetric positions.
 
     Args:
-        genes: Flat array [position_1, mass_1, position_2, mass_2, ...]
+        genes: Flat array [position_1, mass_1, position_2, mass_2, ..., length_adjust?]
         bar: Bar parameters
         material: Material properties
         num_modes: Number of modes to extract
         num_elements: Number of finite elements
         num_weights: Number of weights (for parsing genes)
+        has_length_adjust: Whether genes include length adjustment
 
     Returns:
         List of natural frequencies in Hz
     """
+    # Handle length adjustment if present
+    bar_length = bar.L
+    weight_genes_count = num_weights * 2
+    if has_length_adjust and len(genes) > weight_genes_count:
+        length_adjust = genes[weight_genes_count]
+        bar_length = bar.L - 2 * length_adjust
+
     # Parse genes into weights
-    weight_genes = genes[:num_weights * 2] if num_weights > 0 else []
+    weight_genes = genes[:weight_genes_count] if num_weights > 0 else []
     weights = genes_to_weights(weight_genes)
 
     # Generate uniform element heights (no cuts)
     element_heights: List[float] = [bar.h0] * num_elements
 
-    # Compute nodal masses from weights
-    le = bar.L / num_elements
-    nodal_masses = compute_nodal_added_masses(weights, bar.L, num_elements)
+    # Compute nodal masses from weights (using effective bar length)
+    le = bar_length / num_elements
+    nodal_masses = compute_nodal_added_masses(weights, bar_length, num_elements)
 
     return compute_frequencies_with_weights(
         element_heights,
@@ -533,21 +542,29 @@ def _compute_single_fitness_weights(
     target_frequencies: List[float],
     f1_priority: float,
     num_weights: int,
+    has_length_adjust: bool = False,
 ) -> float:
     """
     Compute fitness for a single individual with weight genes.
     Internal function used by batch_compute_fitness_weights.
     """
+    # Handle length adjustment if present
+    effective_length = bar_length
+    weight_genes_count = num_weights * 2
+    if has_length_adjust and len(genes) > weight_genes_count:
+        length_adjust = genes[weight_genes_count]
+        effective_length = bar_length - 2 * length_adjust
+
     # Parse genes into weights
-    weight_genes = genes[:num_weights * 2] if num_weights > 0 else []
+    weight_genes = genes[:weight_genes_count] if num_weights > 0 else []
     weights = genes_to_weights(weight_genes)
 
     # Generate uniform element heights (no cuts)
     element_heights: List[float] = [h0] * num_elements
 
-    # Compute nodal masses from weights
-    le = bar_length / num_elements
-    nodal_masses = compute_nodal_added_masses(weights, bar_length, num_elements)
+    # Compute nodal masses from weights (using effective length)
+    le = effective_length / num_elements
+    nodal_masses = compute_nodal_added_masses(weights, effective_length, num_elements)
 
     # Compute frequencies
     try:
@@ -595,6 +612,7 @@ def batch_compute_fitness_weights(
     parallel_mode: Literal['threading', 'multiprocessing', 'auto'] = 'auto',
     on_batch_progress: Optional[Callable[[BatchProgressState], None]] = None,
     progress_interval: int = 10,
+    has_length_adjust: bool = False,
 ) -> List[float]:
     """
     Batch compute fitness for weight optimization using parallel execution.
@@ -611,6 +629,7 @@ def batch_compute_fitness_weights(
         parallel_mode: 'threading', 'multiprocessing', or 'auto'
         on_batch_progress: Optional callback for batch progress updates
         progress_interval: How often to report progress
+        has_length_adjust: Whether genes include length adjustment
 
     Returns:
         List of fitness values for each individual
@@ -646,6 +665,7 @@ def batch_compute_fitness_weights(
                 target_frequencies,
                 f1_priority,
                 num_weights,
+                has_length_adjust,
             ): idx
             for idx, genes in enumerate(genes_array)
         }

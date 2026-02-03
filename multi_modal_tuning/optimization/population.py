@@ -383,6 +383,7 @@ class WeightBounds:
     position_max: float  # Maximum position from center (m), typically L/2
     mass_min: float      # Minimum mass (kg)
     mass_max: float      # Maximum mass (kg)
+    max_length_trim: float = 0.0  # Max trim from each end (m), 0 = no length adjustment
 
 
 def create_weight_bounds(
@@ -390,6 +391,7 @@ def create_weight_bounds(
     num_weights: int,
     min_mass: float = 0.0,
     max_mass: float = 0.1,
+    max_length_trim: float = 0.0,
 ) -> WeightBounds:
     """
     Create bounds for weight optimization variables.
@@ -399,6 +401,7 @@ def create_weight_bounds(
         num_weights: Number of weights
         min_mass: Minimum mass per weight (kg)
         max_mass: Maximum mass per weight (kg)
+        max_length_trim: Max trim from each end (m), 0 = no length adjustment
 
     Returns:
         Weight bounds
@@ -408,6 +411,7 @@ def create_weight_bounds(
         position_max=bar.L / 2,
         mass_min=min_mass,
         mass_max=max_mass,
+        max_length_trim=max_length_trim,
     )
 
 
@@ -429,6 +433,10 @@ def create_no_weight_individual(num_weights: int, bounds: WeightBounds) -> Indiv
     for _ in range(num_weights):
         genes.append(0.0)   # position = 0
         genes.append(0.0)   # mass = 0
+
+    # Add length adjustment gene if enabled (set to 0 = no trim)
+    if bounds.max_length_trim > 0:
+        genes.append(0.0)
 
     return Individual(genes=genes, fitness=float('inf'))
 
@@ -454,6 +462,11 @@ def create_random_weight_individual(num_weights: int, bounds: WeightBounds) -> I
         # Random mass
         mass = bounds.mass_min + random.random() * (bounds.mass_max - bounds.mass_min)
         genes.append(mass)
+
+    # Add length adjustment gene if enabled
+    if bounds.max_length_trim > 0:
+        length_adjust = random.random() * bounds.max_length_trim
+        genes.append(length_adjust)
 
     return Individual(genes=genes, fitness=float('inf'))
 
@@ -506,7 +519,7 @@ def clamp_weight_genes(genes: List[float], bounds: WeightBounds, num_weights: in
     Clamp weight genes to bounds.
 
     Args:
-        genes: Gene array [position_1, mass_1, position_2, mass_2, ...]
+        genes: Gene array [position_1, mass_1, position_2, mass_2, ..., length_adjust?]
         bounds: Weight bounds
         num_weights: Number of weights
 
@@ -522,6 +535,10 @@ def clamp_weight_genes(genes: List[float], bounds: WeightBounds, num_weights: in
         # Clamp mass
         if i + 1 < len(clamped):
             clamped[i + 1] = max(bounds.mass_min, min(bounds.mass_max, clamped[i + 1]))
+
+    # Clamp length adjustment gene if present
+    if bounds.max_length_trim > 0 and len(clamped) > weight_genes_length:
+        clamped[weight_genes_length] = max(0.0, min(bounds.max_length_trim, clamped[weight_genes_length]))
 
     return clamped
 
@@ -545,25 +562,35 @@ def weight_mutation(
         Mutated individual
     """
     genes = individual.genes.copy()
-    num_genes = num_weights * 2
+    weight_genes_count = num_weights * 2
+    has_length_adjust = bounds.max_length_trim > 0
+    total_genes = weight_genes_count + (1 if has_length_adjust else 0)
 
     # Mutate random genes
-    num_mutate = random.randint(1, max(1, num_genes))
-    indices_to_mutate = set(random.sample(range(min(len(genes), num_genes)), num_mutate))
+    num_mutate = random.randint(1, max(1, total_genes))
+    indices_to_mutate = set(random.sample(range(min(len(genes), total_genes)), num_mutate))
 
     for idx in indices_to_mutate:
-        is_position = idx % 2 == 0
+        if idx < weight_genes_count:
+            # Weight gene (position or mass)
+            is_position = idx % 2 == 0
 
-        if is_position:
-            range_val = bounds.position_max - bounds.position_min
-            r = random.random() * 2 - 1
-            genes[idx] += sigma * range_val * r
-            genes[idx] = max(bounds.position_min, min(bounds.position_max, genes[idx]))
+            if is_position:
+                range_val = bounds.position_max - bounds.position_min
+                r = random.random() * 2 - 1
+                genes[idx] += sigma * range_val * r
+                genes[idx] = max(bounds.position_min, min(bounds.position_max, genes[idx]))
+            else:
+                range_val = bounds.mass_max - bounds.mass_min
+                r = random.random() * 2 - 1
+                genes[idx] += sigma * range_val * r
+                genes[idx] = max(bounds.mass_min, min(bounds.mass_max, genes[idx]))
         else:
-            range_val = bounds.mass_max - bounds.mass_min
+            # Length adjustment gene
+            range_val = bounds.max_length_trim
             r = random.random() * 2 - 1
             genes[idx] += sigma * range_val * r
-            genes[idx] = max(bounds.mass_min, min(bounds.mass_max, genes[idx]))
+            genes[idx] = max(0.0, min(bounds.max_length_trim, genes[idx]))
 
     return Individual(genes=genes, fitness=float('inf'))
 
